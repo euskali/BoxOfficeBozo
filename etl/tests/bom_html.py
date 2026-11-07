@@ -130,17 +130,28 @@ def old_weekend_page(dates_text: str, rows: list[dict], *, estimates: bool = Fal
 
 
 def release_page(title: str, *, tt: str | None, release_date: date | None, mpaa: str = "PG-13",
-                 genres: str = "Action\n    Adventure", distributor: str = "Example Pictures") -> str:
+                 genres: str = "Action\n    Adventure", distributor: str = "Example Pictures",
+                 synopsis_tt: str | None = None, title_summary: bool = True) -> str:
+    """Laid out like a real release page: heading (h1, then a synopsis that can link to
+    another film), IMDbPro links for this film, the "Title Summary" link, then the summary."""
     def item(label, value):
         return f'<div class="a-section a-spacing-none"><span>{label}</span><span>{value}</span></div>'
 
     rd = (f'<a class="a-link-normal" href="/date/{release_date.isoformat()}/?ref_=bo_rl_rl">'
           f'{release_date.strftime("%b")} {release_date.day}, {release_date.year}</a>') if release_date else "-"
-    title_link = (f'<a class="a-link-normal" href="/title/{tt}/?ref_=bo_rl_ti">Title Summary</a>'
-                  f'<a href="https://pro.imdb.com/title/{tt}/boxoffice">IMDbPro</a>') if tt else ""
+    synopsis = (f'<p class="a-size-medium">Years after <a class="a-link-normal" href="/title/{synopsis_tt}/?ref_=bo_rl_ti">'
+                f'the last one</a>, they are back.</p>') if synopsis_tt else '<p class="a-size-medium">They are back.</p>'
+    pro = (f'<div class="a-section mojo-heading-pro-cta"><div class="a-box"><div class="a-box-inner">'
+           f'<a class="a-link-normal" href="https://pro.imdb.com/title/{tt}/cast">Cast information</a>'
+           f'<a class="a-link-normal" href="https://pro.imdb.com/title/{tt}/boxoffice">Box office</a>'
+           f'</div></div></div>') if tt else ""
+    summary_link = (f'<div class="a-section mojo-title-release-refiner"><div id="title-summary-refiner">'
+                    f'<a class="a-link-normal mojo-title-link refiner-display-highlight" href="/title/{tt}/?ref_=bo_rl_ti">'
+                    f'Title Summary</a></div></div>') if tt and title_summary else ""
     return (
         f"<html><head><title>{title} - Box Office Mojo</title></head><body><main>"
-        f'<h1 class="a-size-extra-large">{title}</h1>{title_link}'
+        f'<div class="a-section mojo-heading-summary"><h1 class="a-size-extra-large">{title}</h1>{synopsis}</div>'
+        f'{pro}{summary_link}'
         '<div class="a-section a-spacing-none mojo-summary-values mojo-hidden-from-mobile">'
         + item("Distributor", f'{distributor}<br><a class="a-size-small" href="https://pro.imdb.com/company/co1/">'
                               f'See full company information<svg viewBox="0 0 1 1"><path d="M0"/></svg></a>')

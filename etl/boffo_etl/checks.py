@@ -329,6 +329,20 @@ def check_releases() -> list[Issue]:
     if bad:
         issues.append(Issue("error", name, 0, f"{len(bad)} releases have an invalid title_id, "
                             + _examples(bad, lambda x: f"{x[0]}: {x[1]!r}")))
+    cols = [r[0] for r in con.execute("DESCRIBE r").fetchall()]
+    if {"source", "is_rerelease", "first_weekend"} <= set(cols):
+        # A title has one first release; the rest are re-releases. Archive-grouped titles with
+        # two first releases usually mean the grouping joined two films.
+        two_firsts = con.execute("""
+            SELECT title_id, string_agg(title || ' (' || release_id || ')', '; ' ORDER BY first_weekend, release_id)
+            FROM r GROUP BY 1
+            HAVING count(*) FILTER (WHERE source = 'bom_weekend') > 0
+               AND count(*) FILTER (WHERE NOT coalesce(is_rerelease, false)) > 1
+            ORDER BY 1""").fetchall()
+        if two_firsts:
+            issues.append(Issue("warning", name, 0,
+                                f"{len(two_firsts)} title_ids group more than one first release (check the grouping), "
+                                + _examples(two_firsts, lambda x: f"{x[0]}: {x[1]}")))
     snaps = _site_table("snapshots")
     if snaps is not None:
         _view(con, "s", snaps)
@@ -337,7 +351,6 @@ def check_releases() -> list[Issue]:
         if orphans:
             issues.append(Issue("error", name, 0, f"{len(orphans)} snapshot release_ids are missing from releases, "
                                 + _examples(orphans, lambda x: x[0])))
-        cols = [r[0] for r in con.execute("DESCRIBE r").fetchall()]
         if "bom_release_id" in cols:
             dup_rl = con.execute("""
                 SELECT bom_release_id, string_agg(release_id, ', ') FROM r WHERE bom_release_id IS NOT NULL

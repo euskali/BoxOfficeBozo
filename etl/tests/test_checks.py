@@ -176,6 +176,29 @@ def test_release_integrity_errors(repo, capsys):
     assert "snapshot release_ids are missing from releases, e.g. legacy:b" in out
 
 
+def test_title_grouping_two_first_releases_warns(repo, capsys):
+    write_tables(repo, CLEAN)
+    site = repo / "site" / "public" / "data"
+    base = {"source_key": "x", "group_source": "auto"}
+    pl.DataFrame([
+        {**base, "release_id": "legacy:a", "title_id": "bb_a", "title": "Space Saga", "source": "stat695",
+         "is_rerelease": False, "first_weekend": SUN},
+        {**base, "release_id": "legacy:b", "title_id": "bb_b", "title": "Holdover", "source": "stat695",
+         "is_rerelease": False, "first_weekend": SUN},
+        # Joined to "Space Saga" as if it were the same film, but it's a first release.
+        {**base, "release_id": "bom:rl1", "title_id": "bb_a", "title": "Space Saga II", "source": "bom_weekend",
+         "is_rerelease": False, "first_weekend": SUN + timedelta(weeks=60)},
+        # A labelled re-release in a title's group is expected.
+        {**base, "release_id": "bom:rl2", "title_id": "bb_b", "title": "Holdover", "source": "bom_weekend",
+         "is_rerelease": True, "first_weekend": SUN + timedelta(weeks=70)},
+    ], schema=RELEASE_SCHEMA).write_parquet(site / "releases.parquet")
+    code, out = run(capsys)
+    assert code == 0, out
+    assert ("1 title_ids group more than one first release (check the grouping), "
+            "e.g. bb_a: Space Saga (legacy:a); Space Saga II (bom:rl1)") in out
+    assert "0 error(s), 1 warning(s)" in out
+
+
 # --- stat695 report ------------------------------------------------------------
 
 def report(**kw) -> dict:
