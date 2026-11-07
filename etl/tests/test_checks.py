@@ -194,7 +194,7 @@ def test_title_grouping_two_first_releases_warns(repo, capsys):
     ], schema=RELEASE_SCHEMA).write_parquet(site / "releases.parquet")
     code, out = run(capsys)
     assert code == 0, out
-    assert ("1 title_ids group more than one first release (check the grouping), "
+    assert ("1 title_ids group more than one first release (check the grouping or the match), biggest first, "
             "e.g. bb_a: Space Saga (legacy:a); Space Saga II (bom:rl1)") in out
     assert "0 error(s), 1 warning(s)" in out
 
@@ -255,3 +255,76 @@ def test_report_warns_on_encoding_fallback(repo, capsys):
     write_report(repo, report(unmarked_string_encoding="WINDOWS-1252"))
     code, out = run(capsys)
     assert code == 0 and "read as WINDOWS-1252" in out
+
+
+# --- M3: matching ------------------------------------------------------------------
+
+def match_report(**kw) -> dict:
+    base = {
+        "films_loaded": 100, "releases": 3, "titles": 2, "gross_total": 100, "gross_matched_tt": 98,
+        "matched_share": 0.98, "matched_target": 0.97, "top_releases": 1000, "top_unmatched": [],
+        "by_method": {"p1237": {"releases": 2, "gross": 98, "share": 0.98},
+                      "unmatched": {"releases": 1, "gross": 2, "share": 0.02}},
+        "ambiguous_count": 0, "ambiguous": [], "notes": {},
+    }
+    base.update(kw)
+    return base
+
+
+def write_build_json(repo, name: str, data: dict) -> None:
+    build = repo / "data" / "build"
+    build.mkdir(parents=True, exist_ok=True)
+    (build / name).write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_match_report_meeting_the_targets_passes(repo, capsys):
+    write_build_json(repo, "match_report.json", match_report())
+    code, out = run(capsys)
+    assert code == 0, out
+    assert "match: 3 releases -> 2 titles, 98.00% of gross matched to an IMDb id; p1237 2 (98.0% of gross)" in out
+
+
+@pytest.mark.parametrize("kw, message", [
+    ({"matched_share": 0.9}, "only 90.00% of nominal gross is matched to an IMDb id (accept: at least 97%)"),
+    ({"top_unmatched": [{"release_id": "legacy:x", "title": "X", "gross": 5, "method": "unmatched"}]},
+     "1 of the top 1000 releases by gross have no IMDb id"),
+    ({"films_loaded": 0}, "no Wikidata snapshot was loaded"),
+])
+def test_match_report_errors(repo, capsys, kw, message):
+    write_build_json(repo, "match_report.json", match_report(**kw))
+    code, out = run(capsys)
+    assert code == 1 and message in out
+
+
+def test_match_and_wikidata_notes_warn(repo, capsys):
+    write_build_json(repo, "match_report.json", match_report(
+        notes={"group_conflicts": {"count": 1, "examples": ["group bb_x: a -> tt1, b -> tt2"]}}))
+    write_build_json(repo, "wikidata_report.json", {
+        "snapshot": "2026-10", "endpoint": "https://qlever.dev/api/wikidata", "items": 5, "items_with_tt": 4,
+        "bom_ids": 3, "items_with_bom_id": 3, "stale_reason": "HTTP 503",
+        "bom_ids_on_several_items": ["dup: Q1, Q2"], "release_page_tt_lookup": {"asked": 1, "found": 0, "error": None}})
+    code, out = run(capsys)
+    assert code == 0, out
+    assert "1 groups whose releases matched different titles" in out
+    assert "so 2026-10's was used (HTTP 503)" in out and "dup: Q1, Q2" in out
+
+
+def write_titles(repo, rows: list[dict]) -> None:
+    from boffo_etl.match import TITLE_SCHEMA
+
+    pl.DataFrame(rows, schema=TITLE_SCHEMA).write_parquet(repo / "site" / "public" / "data" / "titles.parquet")
+
+
+def test_titles_cover_every_release(repo, capsys):
+    write_tables(repo, CLEAN)
+    write_titles(repo, [{"title_id": "bb_a"}, {"title_id": "bb_b"}])
+    code, out = run(capsys)
+    assert code == 0, out
+    write_titles(repo, [{"title_id": "bb_a"}, {"title_id": "tt0000001"}, {"title_id": "tt0000001"},
+                        {"title_id": "bb_c", "pre1982_baseline_gross": 1.0}])
+    code, out = run(capsys)
+    assert code == 1
+    assert "1 title_ids appear more than once, e.g. tt0000001" in out
+    assert "1 release title_ids are missing from titles, e.g. bb_b" in out
+    assert "1 titles have neither a release nor a baseline, e.g. tt0000001" in out
+    assert "titles with an IMDb id have no Wikidata item" in out

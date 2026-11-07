@@ -12,10 +12,10 @@ from typing import Callable
 
 import polars as pl
 
-from . import paths
+from . import match, paths
 from .fetch import FetchDisabledError
 from .manual import validate_manual_dir
-from .sources import bom_weekend, stat695
+from .sources import bom_weekend, stat695, wikidata
 
 REQUIRE_DATA_FLAG = "BOFFO_REQUIRE_DATA"
 
@@ -24,17 +24,19 @@ REQUIRE_DATA_FLAG = "BOFFO_REQUIRE_DATA"
 STEPS: list[tuple[str, str, Callable[[], object] | None]] = [
     ("stat695", "M1", stat695.run),
     ("bom_weekend", "M2", bom_weekend.run),
-    ("wikidata", "M3/M4", None),
+    ("wikidata", "M3", wikidata.run),
     ("cpi", "M5", None),
 ]
 
 # Shipped tables and the per-source parts in data/build/ they are combined from.
 SNAPSHOT_SOURCES = ("stat695", "bom_weekend")
-PUBLISHED = ("snapshots", "releases")
+PUBLISHED = ("snapshots", "releases", "titles")
 
 # releases.parquet as shipped: the per-source columns plus the new-site release id (rl...),
 # for stat695 releases too when M2 stitched a carry-over film to one.
 PUBLISHED_RELEASE_SCHEMA = {**stat695.RELEASE_SCHEMA, "bom_release_id": pl.String}
+# ...plus how M3 matched each release to its title (match.METHODS).
+RELEASES_OUT_SCHEMA = {**PUBLISHED_RELEASE_SCHEMA, "match_method": pl.String}
 
 
 def _table_entry(path: Path) -> dict:
@@ -78,25 +80,27 @@ def _parts(table: str) -> list[pl.DataFrame]:
 
 
 def publish_tables() -> list[dict]:
-    """Combine per-source parts into site/public/data/<table>.parquet."""
-    tables = []
+    """Combine per-source parts, match releases to titles (M3), write site/public/data/<table>.parquet."""
     snaps = _parts("snapshots")
-    if snaps:
-        snapshots = pl.concat(snaps, how="diagonal_relaxed").sort("weekend_end", "rank", "release_id",
-                                                                   nulls_last=True)
-        out = paths.site_data() / "snapshots.parquet"
-        snapshots.write_parquet(out)
-        tables.append(_table_entry(out))
-    else:
-        snapshots = pl.DataFrame(schema=stat695.SNAPSHOT_SCHEMA)
     rels = _parts("releases")
+    if not snaps and not rels:
+        return []
+    snapshots = (pl.concat(snaps, how="diagonal_relaxed").sort("weekend_end", "rank", "release_id", nulls_last=True)
+                 if snaps else pl.DataFrame(schema=stat695.SNAPSHOT_SCHEMA))
+    outputs: dict[str, pl.DataFrame] = {"snapshots": snapshots}
     if rels:
         links_path = paths.data_build() / "bom_weekend_links.parquet"
         links = pl.read_parquet(links_path) if links_path.is_file() else None
         releases = assemble_releases(pl.concat(rels, how="diagonal_relaxed"), snapshots, links)
-        out = paths.site_data() / "releases.parquet"
-        releases.write_parquet(out)
-        tables.append(_table_entry(out))
+        matched = match.apply(releases, snapshots)
+        outputs = {"snapshots": matched.snapshots, "releases": matched.releases.select(list(RELEASES_OUT_SCHEMA)),
+                   "titles": matched.titles}
+    tables = []
+    for name in PUBLISHED:
+        if name in outputs:
+            out = paths.site_data() / f"{name}.parquet"
+            outputs[name].write_parquet(out)
+            tables.append(_table_entry(out))
     return tables
 
 
