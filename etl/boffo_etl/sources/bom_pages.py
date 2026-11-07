@@ -297,6 +297,11 @@ class ReleaseInfo:
     distributor: str | None
 
 
+_TITLE_LINK_RE = re.compile(r"^(?:https?://(?:www\.boxofficemojo\.com|pro\.imdb\.com))?/title/(tt\d{7,})(?:[/?#]|$)")
+# Block elements whose start or end also ends an open <p> (HTML's implicit close).
+_CLOSES_P = frozenset({"div", "section", "table", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "main", "form"})
+
+
 class _Summary(HTMLParser):
     """Label/value pairs from ``div.mojo-summary-values`` (<div><span>Label</span><span>Value</span></div>)."""
 
@@ -307,9 +312,11 @@ class _Summary(HTMLParser):
         self.item_depth: int | None = None
         self.span_depth: int | None = None
         self.items: list[dict] = []
-        self.title_ids: list[str] = []
+        self.summary_title_ids: list[str] = []  # the "Title Summary" link: this release's own title
+        self.title_ids: list[str] = []  # other title links outside running text
         self.h1: list[str] = []
         self._in_h1 = False
+        self._in_p = False
         self._skip = 0
 
     def handle_starttag(self, tag, attrs):
@@ -317,10 +324,19 @@ class _Summary(HTMLParser):
         if tag in ("script", "style"):
             self._skip += 1
             return
+        if tag == "p":
+            self._in_p = True
+        elif tag in _CLOSES_P:
+            self._in_p = False
         href = a.get("href", "")
-        m = re.match(r"^(?:https?://www\.boxofficemojo\.com)?/title/(tt\d{7,})/?", href)
+        m = _TITLE_LINK_RE.match(href)
         if m:
-            self.title_ids.append(m[1])
+            # A synopsis can link to another film ("Five years after <a>Dominion</a>..."),
+            # so links inside a paragraph never name the release.
+            if "mojo-title-link" in a.get("class", "").split():
+                self.summary_title_ids.append(m[1])
+            elif not self._in_p:
+                self.title_ids.append(m[1])
         if tag in htmltables.VOID:
             if tag == "br" and self.span_depth is not None and self.items:
                 self.items[-1]["spans"][-1].append(" ")
@@ -348,6 +364,8 @@ class _Summary(HTMLParser):
             return
         if tag == "h1":
             self._in_h1 = False
+        if tag in ("p", *_CLOSES_P):
+            self._in_p = False
         if self.span_depth is not None and self.depth == self.span_depth:
             self.span_depth = None
         if self.item_depth is not None and self.depth == self.item_depth:
@@ -373,7 +391,8 @@ def parse_release_page(html: str) -> ReleaseInfo:
     p = _Summary()
     p.feed(html)
     p.close()
-    if not p.items and not p.title_ids:
+    title_ids = p.summary_title_ids or p.title_ids
+    if not p.items and not title_ids:
         raise NotAChart("no release summary or title link")
     fields: dict[str, tuple[str, list[str]]] = {}
     for item in p.items:
@@ -397,7 +416,7 @@ def parse_release_page(html: str) -> ReleaseInfo:
     if distributor:
         distributor = re.sub(r"\s*See full company information\s*$", "", distributor) or None
     return ReleaseInfo(
-        tt_id=p.title_ids[0] if p.title_ids else None,
+        tt_id=title_ids[0] if title_ids else None,
         title=_text_or_none(squash("".join(p.h1))),
         release_date=release_date,
         mpaa=value("mpaa"),

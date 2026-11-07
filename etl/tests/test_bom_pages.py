@@ -133,6 +133,21 @@ def test_release_page():
     assert info.distributor == "Example Pictures"
 
 
+def test_release_page_ignores_a_synopsis_link_to_another_film():
+    # Real pages link the previous film in the synopsis, ahead of the release's own links.
+    page = release_page("Space Saga: Part Ten", tt="tt7654321", release_date=date(2021, 5, 7), synopsis_tt="tt1234567")
+    assert parse_release_page(page).tt_id == "tt7654321"
+    # Without the "Title Summary" link, the IMDbPro links outside the synopsis still name it.
+    page = release_page("Space Saga: Part Ten", tt="tt7654321", release_date=None, synopsis_tt="tt1234567",
+                        title_summary=False)
+    assert parse_release_page(page).tt_id == "tt7654321"
+
+
+def test_release_page_with_only_a_synopsis_link_has_no_title():
+    info = parse_release_page(release_page("Odd Sequel", tt=None, release_date=None, synopsis_tt="tt1234567"))
+    assert info.tt_id is None
+
+
 def test_release_page_without_title_link():
     info = parse_release_page(release_page("Odd One", tt=None, release_date=None))
     assert info.tt_id is None and info.release_date is None and info.mpaa == "PG-13"
