@@ -62,6 +62,7 @@ jobs:
       - name: Build data (fetches only what is not cached)
         env:
           BOFFO_FETCH: "1"
+          PYTHONUNBUFFERED: "1"  # show progress lines as they happen in a multi-hour step
         run: make etl
 
       # Save the cache even if the build failed, so a long first fetch is not lost.

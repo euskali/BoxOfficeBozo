@@ -169,7 +169,7 @@ def fetcher_for(fa: FakeArchive) -> Fetcher:
 
 def run_world(fa, **kw):
     snaps, rels = legacy_tables()
-    return bw.ingest(fetcher_for(fa), TODAY, snaps, rels, log=lambda *a: None, **kw)
+    return bw.ingest(fetcher_for(fa), TODAY, snaps, rels, log=lambda *a: None, retry_pause=0, **kw)
 
 
 def by_code(ing):
@@ -252,6 +252,15 @@ def test_failed_lookup_is_an_error_not_a_gap(fetch_on):
     res = by_code(run_world(fa))
     assert res["2017W02"].status == "error"
     assert res["2017W01"].status == "ok"
+
+
+def test_failed_lookup_gets_a_second_try(fetch_on):
+    fa = world()
+    fa.fail_times["weekend%2F2017W02"] = 4  # every attempt of the first lookup
+    res = by_code(run_world(fa))
+    assert res["2017W02"].status == "ok"
+    assert any(n.startswith("wayback lookup failed") for n in res["2017W02"].notes)
+    assert res["2017W02"].notes[-1].startswith("second try: ")
 
 
 def test_unreadable_common_crawl_index_leaves_the_weekend_unchecked(fetch_on):

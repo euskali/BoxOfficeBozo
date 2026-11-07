@@ -25,6 +25,7 @@ class FakeArchive:
         self.cc: dict[tuple[str, str], list[dict]] = {}
         self.warcs: dict[str, bytes] = {}
         self.fail: list[str] = []  # URL substrings answered with HTTP 503
+        self.fail_times: dict[str, int] = {}  # ...for the first n matching requests only
         self.requests: list[str] = []
 
     # -- setup -------------------------------------------------------------
@@ -53,6 +54,10 @@ class FakeArchive:
         self.requests.append(url)
         if any(f in url for f in self.fail):
             return httpx.Response(503, text="Temporarily Offline")
+        for f, n in self.fail_times.items():
+            if f in url and n > 0:
+                self.fail_times[f] = n - 1
+                return httpx.Response(503, text="Temporarily Offline")
         parts = urlsplit(url)
         q = {k: v[0] for k, v in parse_qs(parts.query, keep_blank_values=True).items()}
         host = parts.hostname

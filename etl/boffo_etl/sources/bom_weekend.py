@@ -86,7 +86,9 @@ ENV_RELEASE_MINUTES = "BOFFO_RELEASE_PAGE_MINUTES"
 DEFAULT_MINUTES = 270.0
 DEFAULT_RELEASE_PAGES = 150
 DEFAULT_RELEASE_MINUTES = 45.0
+RELEASE_PAGE_MIN_GROSS = 1_000_000  # smaller releases are left to M3's title matching
 CC_INDEX_BUDGET = 60
+RETRY_PAUSE = 60.0  # seconds before failed lookups get their second chance
 
 OK, EMPTY, NO_CAPTURE, UNCHECKED, ERROR, PENDING = "ok", "empty_chart", "no_capture", "unchecked", "error", "pending"
 # Statuses that the gap report accepts as "no data for this weekend".
@@ -158,7 +160,7 @@ class Budget:
     cc_queries: int = CC_INDEX_BUDGET
 
     def check(self) -> None:
-        if time.monotonic() > self.deadline:
+        if time.monotonic() >= self.deadline:
             raise BudgetExhausted("fetch time budget used up")
 
 
@@ -738,6 +740,7 @@ def ingest(
     minutes: float = DEFAULT_MINUTES,
     release_page_lookups: int = DEFAULT_RELEASE_PAGES,
     release_page_minutes: float = DEFAULT_RELEASE_MINUTES,
+    retry_pause: float = RETRY_PAUSE,
     log=print,
 ) -> Ingest:
     started = time.monotonic()
@@ -772,6 +775,17 @@ def ingest(
             log(f"  bom_weekend: {i}/{len(codes)} weekends, {dict(counts)}, "
                 f"{fetcher.network_requests} requests, {(time.monotonic() - started) / 60:.1f} min")
 
+    # The Wayback Machine has bad minutes: failed lookups get one more try after a pause.
+    failed = [(lst, i) for lst in (overlap_results, results) for i, r in enumerate(lst) if r.status == ERROR]
+    if failed and time.monotonic() < budget.deadline:
+        log(f"  bom_weekend: retrying {len(failed)} weekends whose lookups failed")
+        time.sleep(retry_pause)
+        for lst, i in failed:
+            again = loc.locate(lst[i].code, allow_old=lst is results)
+            again.notes = lst[i].notes + ["second try: " + (" | ".join(again.notes) or again.status)]
+            lst[i] = again
+        log(f"  bom_weekend: after retrying, {dict(Counter(r.status for r in results))}")
+
     main = rows_frame(results)
     overlap = rows_frame(overlap_results)
 
@@ -792,7 +806,8 @@ def ingest(
                                                                          nulls_last=True)
     eligible_set = set(eligible["key"].to_list())
     order = [rl for rl in links if rl in eligible_set]
-    order += [rl for rl in eligible["key"].to_list() if rl not in links]
+    order += [rl for rl in eligible.filter(pl.col("total_gross") >= RELEASE_PAGE_MIN_GROSS)["key"].to_list()
+              if rl not in links]
     page_deadline = min(budget.deadline, time.monotonic() + release_page_minutes * 60)
     pages, page_stats = release_pages(fetcher, order, lookups=release_page_lookups, deadline=page_deadline)
     pages_df = pl.DataFrame(pages, schema=RELEASE_PAGE_SCHEMA)

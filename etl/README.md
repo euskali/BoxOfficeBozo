@@ -34,7 +34,8 @@ the-numbers.com and related hosts is permanently blocked.
 The M2 step (`sources/bom_weekend.py`) fetches about a thousand archived pages
 on its first run. It stops starting new fetches after `BOFFO_FETCH_MINUTES`
 (default 270) and makes at most `BOFFO_RELEASE_PAGES` (default 150) new
-release-page lookups per run, within `BOFFO_RELEASE_PAGE_MINUTES` (default 45).
+release-page lookups per run, within `BOFFO_RELEASE_PAGE_MINUTES` (default 45),
+for stitched carry-overs and releases that grossed $1M or more.
 Weekends it didn't reach are marked `pending`, `checks.py` fails on them, and
 the next run continues from the cache.
 
