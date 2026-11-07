@@ -26,7 +26,8 @@ def test_build_creates_dirs_and_manifest(repo, capsys):
     assert "disabled" in out
     assert "step stat695: skipped, its raw input is not cached" in out
     assert "step bom_weekend: skipped, its raw input is not cached" in out
-    assert "not implemented until M3/M4" in out
+    assert "step wikidata: skipped, its raw input is not cached" in out
+    assert "not implemented until M5" in out
 
 
 def test_build_fails_when_data_is_required(repo, monkeypatch, capsys):
@@ -67,9 +68,14 @@ def test_full_build_from_cached_rda(repo, monkeypatch, capsys):
     assert snaps.height == 4 and set(snaps["source"]) == {"stat695"}
     assert pl.read_parquet(site / "releases.parquet").height == 2
     tables = {t["name"]: t for t in json.loads((site / "manifest.json").read_text())["tables"]}
-    assert set(tables) == {"snapshots", "releases"}
+    assert set(tables) == {"snapshots", "releases", "titles"}
     assert tables["snapshots"]["rows"] == 4 and len(tables["snapshots"]["sha256"]) == 64
-    for f in ("stat695_snapshots.parquet", "stat695_releases.parquet", "stat695_report.json", "stat695_rereleases.csv"):
+    # No Wikidata snapshot offline: every release keeps its provisional id, and says so.
+    rels = pl.read_parquet(site / "releases.parquet")
+    assert set(rels["match_method"]) == {"unmatched"} and all(t.startswith("bb_") for t in rels["title_id"])
+    assert sorted(pl.read_parquet(site / "titles.parquet")["title_id"]) == sorted(set(rels["title_id"]))
+    for f in ("stat695_snapshots.parquet", "stat695_releases.parquet", "stat695_report.json", "stat695_rereleases.csv",
+              "match.parquet", "match_report.csv", "match_report.json"):
         assert (repo / "data/build" / f).is_file()
 
 

@@ -3,7 +3,7 @@
 BoxOfficeBozo is a free, non-commercial hobby project. This notice says where the site's data comes from, what terms each source sets, and how to ask for something to be removed or corrected.
 
 ## Not affiliated
-BoxOfficeBozo is an independent fan project. It is **not affiliated with, endorsed by, or sponsored by** IMDb.com, Inc., Box Office Mojo, IMDbPro, Amazon, The Numbers / Nash Information Services, the Internet Archive, Common Crawl, the Wikimedia Foundation or Wikidata, the U.S. Bureau of Labor Statistics, Cinema United (formerly NATO), Purdue University, or any film studio or distributor.
+BoxOfficeBozo is an independent fan project. It is **not affiliated with, endorsed by, or sponsored by** IMDb.com, Inc., Box Office Mojo, IMDbPro, Amazon, The Numbers / Nash Information Services, the Internet Archive, Common Crawl, the Wikimedia Foundation or Wikidata, the University of Freiburg or QLever, the U.S. Bureau of Labor Statistics, Cinema United (formerly NATO), Purdue University, or any film studio or distributor.
 
 Box Office Mojo and IMDb are trademarks of IMDb.com, Inc. Other trademarks belong to their owners. Film titles and people's names are used only to identify the films and people they refer to.
 
@@ -27,6 +27,7 @@ Box Office Mojo and IMDb are trademarks of IMDb.com, Inc. Other trademarks belon
 
 ### Films, directors, and cast: Wikidata
 - **What:** film titles, release dates, genres, directors, cast, and identifiers. IMDb IDs (Wikidata property P345) are used only as identifiers and links.
+- **How:** we query Wikidata through QLever (https://qlever.dev), a public SPARQL endpoint run by the University of Freiburg, once a month. Each release is matched to a Wikidata film by Wikidata's own Box Office Mojo and IMDb ID statements, or by title and year.
 - **Terms:** Wikidata's structured data is released under CC0 1.0 (https://www.wikidata.org/wiki/Wikidata:Licensing). Attribution isn't required, but we credit Wikidata and its contributors.
 - We do **not** use the IMDb non-commercial datasets. Their terms don't allow republishing them as an online database of movie information.
 
