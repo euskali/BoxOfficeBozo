@@ -58,7 +58,7 @@ The repo is public, so it holds **code, docs, and cited manual CSVs only**. No s
 | Publish | `data-build` uploads `site/dist` as the Pages artifact. Then the `deploy` job publishes it | GitHub Pages only |
 
 - **Locally the ETL is offline.** A cache miss raises `FetchDisabledError`. Unit tests use small synthetic fixtures, never real scraped data.
-- **Raw cache:** restored by prefix `raw-v1-`. It's saved under `raw-v1-<fingerprint of the file list>` only when new files were fetched, and saved even if the build fails so a long first fetch isn't lost. GitHub evicts caches unused for 7 days or past the repo's size limit. The next run then re-fetches politely. That's slow but correct. Bump the prefix to `raw-v2-` to force a clean fetch.
+- **Raw cache:** restored by prefix `raw-v1-`. It's saved under `raw-v1-<fingerprint of the file list>` only when new files were fetched, and saved even if the build fails so a long first fetch isn't lost. GitHub evicts caches unused for 7 days or past the repo's size limit; the weekly Monday run keeps the cache in use. After an eviction the next run re-fetches politely. That's slow but correct. Bump the prefix to `raw-v2-` to force a clean fetch.
 - **PR CI has no data.** Tests that need built tables skip when they're absent. The `data-build` job runs them for real (from M1, set `BOFFO_REQUIRE_DATA=1` there so a missing table fails instead of skipping).
 - **`make guard`** fails CI if `*.parquet`, `*.rda`, `data/raw/`, `data/build/`, or `site/public/data/` files are tracked.
 
@@ -105,7 +105,7 @@ Credits and titles come from **Wikidata (CC0)**, not the IMDb datasets. IMDb's n
 - `boffo_etl/manual.py` + `checks.py`: manual CSV schemas and citation rules; empty (header-only) manual CSVs.
 - `site/`: Vite + React + TS + Tailwind v4 + `@duckdb/duckdb-wasm` + uPlot + react-router + Vitest.
 - `.gitignore`, `Makefile` with `setup`, `etl`, `check`, `test`, `site-dev`, `site-build`, `guard`.
-- GitHub Actions: `ci.yml` (PRs: guard, pytest, vitest, `checks.py`, site build) and `deploy.yml` (push to `main`: `data-build` job with the raw-download cache, then a `deploy` job to Pages).
+- GitHub Actions: `ci.yml` (PRs: guard, pytest, vitest, `checks.py`, site build) and `deploy.yml` (push to `main`, and weekly on Monday: `data-build` job with the raw-download cache, then a `deploy` job to Pages).
 - `DATA_NOTICE.md`, with a takedown issue template.
 - **Accept:** `make test` passes (with placeholder tests); the site dev server shows a "Hello 1999" page in the theme from DESIGN.md; the workflows are valid and `make guard` passes.
 
@@ -200,7 +200,7 @@ Credits and titles come from **Wikidata (CC0)**, not the IMDb datasets. IMDb's n
 ---
 
 ## Explicitly out of MVP
-Worldwide/international, daily grosses, pre-1982 week-by-week history, studio/franchise/genre rollups, quiz mode, weekly auto-update Action (Phase 2). See `ROADMAP.md`.
+Worldwide/international, daily grosses, pre-1982 week-by-week history, studio/franchise/genre rollups, quiz mode. See `ROADMAP.md`.
 
 ## Open decisions (defaults chosen; change anytime)
 | Decision | Default |
