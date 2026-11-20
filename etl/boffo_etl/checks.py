@@ -330,19 +330,27 @@ def check_releases() -> list[Issue]:
         issues.append(Issue("error", name, 0, f"{len(bad)} releases have an invalid title_id, "
                             + _examples(bad, lambda x: f"{x[0]}: {x[1]!r}")))
     cols = [r[0] for r in con.execute("DESCRIBE r").fetchall()]
-    if {"source", "is_rerelease", "first_weekend"} <= set(cols):
-        # A title has one first release; the rest are re-releases. Archive-grouped titles with
-        # two first releases usually mean the grouping joined two films.
-        two_firsts = con.execute("""
-            SELECT title_id, string_agg(title || ' (' || release_id || ')', '; ' ORDER BY first_weekend, release_id)
-            FROM r GROUP BY 1
-            HAVING count(*) FILTER (WHERE source = 'bom_weekend') > 0
-               AND count(*) FILTER (WHERE NOT coalesce(is_rerelease, false)) > 1
-            ORDER BY 1""").fetchall()
+    if {"is_rerelease", "first_weekend"} <= set(cols):
+        # A title has one first release; the rest are re-releases. Two first releases usually
+        # mean a grouping or an M3 match joined two films, or one run was charted under two ids
+        # (which would count it twice). Biggest titles first.
+        snaps_path = _site_table("snapshots")
+        if snaps_path is not None:
+            _view(con, "g_s", snaps_path)
+            gross = "(SELECT release_id, max(total_gross) AS g FROM g_s GROUP BY 1)"
+        else:
+            gross = "(SELECT NULL::VARCHAR AS release_id, 0 AS g)"
+        two_firsts = con.execute(f"""
+            SELECT title_id, string_agg(title || ' (' || release_id || ')', '; ' ORDER BY first_weekend, release_id),
+                   sum(coalesce(g, 0)) AS total
+            FROM r LEFT JOIN {gross} USING (release_id) GROUP BY 1
+            HAVING count(*) FILTER (WHERE NOT coalesce(is_rerelease, false)) > 1
+            ORDER BY total DESC, 1""").fetchall()
         if two_firsts:
             issues.append(Issue("warning", name, 0,
-                                f"{len(two_firsts)} title_ids group more than one first release (check the grouping), "
-                                + _examples(two_firsts, lambda x: f"{x[0]}: {x[1]}")))
+                                f"{len(two_firsts)} title_ids group more than one first release (check the grouping "
+                                "or the match), biggest first, "
+                                + _examples(two_firsts, lambda x: f"{x[0]}: {x[1]}", limit=10)))
     snaps = _site_table("snapshots")
     if snaps is not None:
         _view(con, "s", snaps)
@@ -368,6 +376,107 @@ def check_releases() -> list[Issue]:
     return issues
 
 
+# --- M3: identity matching -------------------------------------------------------
+
+MATCH_REPORT = "match_report.json"
+WIKIDATA_REPORT = "wikidata_report.json"
+MATCH_NOTES = {
+    "group_conflicts": "groups whose releases matched different titles (unmatched members follow the original)",
+    "release_page_vs_p1237": "releases whose archived release page and Wikidata P1237 disagree (the page wins)",
+    "release_page_tt_not_on_wikidata": "release-page IMDb ids with no Wikidata item (P345)",
+    "p1237_on_several_items": "releases whose legacy id is on several Wikidata items (the best-known is used)",
+}
+
+
+def check_wikidata_report() -> list[Issue]:
+    path = paths.data_build() / WIKIDATA_REPORT
+    if not path.is_file():
+        return []
+    name = WIKIDATA_REPORT
+    wd = json.loads(path.read_text(encoding="utf-8"))
+    issues: list[Issue] = []
+    print(f"wikidata: snapshot {wd['snapshot']} from {wd['endpoint']}: {wd['items']} items, "
+          f"{wd['items_with_tt']} with an IMDb id, {wd['bom_ids']} legacy Box Office Mojo ids on "
+          f"{wd['items_with_bom_id']} items; release-page tt lookup {wd['release_page_tt_lookup']}")
+    if wd.get("stale_reason"):
+        issues.append(Issue("warning", name, 0, f"this month's snapshot couldn't be fetched, so {wd['snapshot']}'s "
+                            f"was used ({wd['stale_reason'][:200]})"))
+    multi = wd.get("bom_ids_on_several_items") or []
+    if multi:
+        issues.append(Issue("warning", name, 0, f"{len(multi)} legacy Box Office Mojo ids (P1237) are on several "
+                            "Wikidata items (worth fixing upstream), " + _examples([(e,) for e in multi], lambda x: x[0])))
+    if (wd.get("release_page_tt_lookup") or {}).get("error"):
+        issues.append(Issue("warning", name, 0,
+                            f"the P345 lookup of release-page tt ids failed: {wd['release_page_tt_lookup']['error']}"))
+    return issues
+
+
+def check_match_report() -> list[Issue]:
+    """Accept: >= 97% of nominal gross matched to an IMDb id, and every one of the top 1,000 releases."""
+    path = paths.data_build() / MATCH_REPORT
+    if not path.is_file():
+        return []
+    name = MATCH_REPORT
+    r = json.loads(path.read_text(encoding="utf-8"))
+    issues: list[Issue] = []
+    methods = "; ".join(f"{k} {v['releases']} ({v['share']:.1%} of gross)" for k, v in r["by_method"].items())
+    print(f"match: {r['releases']} releases -> {r['titles']} titles, {r['matched_share']:.2%} of gross matched "
+          f"to an IMDb id; {methods}; {r['ambiguous_count']} ambiguous title matches left unmatched")
+    if not r["films_loaded"]:
+        return [Issue("error", name, 0, "no Wikidata snapshot was loaded, so nothing was matched")]
+    if r["matched_share"] < r["matched_target"]:
+        issues.append(Issue("error", name, 0, f"only {r['matched_share']:.2%} of nominal gross is matched to an "
+                            f"IMDb id (accept: at least {r['matched_target']:.0%})"))
+    if r["top_unmatched"]:
+        issues.append(Issue("error", name, 0,
+                            f"{len(r['top_unmatched'])} of the top {r['top_releases']} releases by gross have no "
+                            "IMDb id (accept: all of them; add a cited row to data/manual/id_overrides.csv), "
+                            + _examples(r["top_unmatched"], lambda x: f"{x['release_id']} {x['title']!r} "
+                                        f"(${x['gross'] or 0:,}, {x['method']})", limit=GAPS_LISTED)))
+    for key, why in MATCH_NOTES.items():
+        note = r["notes"].get(key)
+        if note and note["count"]:
+            issues.append(Issue("warning", name, 0, f"{note['count']} {why}, "
+                                + _examples([(e,) for e in note["examples"]], lambda x: x[0])))
+    return issues
+
+
+def check_titles() -> list[Issue]:
+    path = _site_table("titles")
+    if path is None:
+        return []
+    name = "titles.parquet"
+    issues: list[Issue] = []
+    con = _connect()
+    _view(con, "t", path)
+    dup = con.execute("SELECT title_id FROM t GROUP BY 1 HAVING count(*) > 1 ORDER BY 1").fetchall()
+    if dup:
+        issues.append(Issue("error", name, 0, f"{len(dup)} title_ids appear more than once, "
+                            + _examples(dup, lambda x: x[0])))
+    bad = con.execute("SELECT title_id FROM t WHERE NOT regexp_full_match(coalesce(title_id, ''), ?) ORDER BY 1",
+                      [TITLE_ID_RE.pattern.strip("^$")]).fetchall()
+    if bad:
+        issues.append(Issue("error", name, 0, f"{len(bad)} invalid title_ids, " + _examples(bad, lambda x: repr(x[0]))))
+    no_qid = con.execute("SELECT title_id FROM t WHERE title_id LIKE 'tt%' AND wikidata_qid IS NULL ORDER BY 1").fetchall()
+    if no_qid:
+        issues.append(Issue("warning", name, 0, f"{len(no_qid)} titles with an IMDb id have no Wikidata item, "
+                            + _examples(no_qid, lambda x: x[0])))
+    rels = _site_table("releases")
+    if rels is not None:
+        _view(con, "r", rels)
+        missing = con.execute("SELECT DISTINCT title_id FROM r ANTI JOIN t USING (title_id) ORDER BY 1").fetchall()
+        if missing:
+            issues.append(Issue("error", name, 0, f"{len(missing)} release title_ids are missing from titles, "
+                                + _examples(missing, lambda x: x[0])))
+        orphan = con.execute("""SELECT DISTINCT title_id FROM t ANTI JOIN r USING (title_id)
+                                WHERE pre1982_baseline_gross IS NULL ORDER BY 1""").fetchall()
+        if orphan:
+            issues.append(Issue("error", name, 0, f"{len(orphan)} titles have neither a release nor a baseline, "
+                                + _examples(orphan, lambda x: x[0])))
+    con.close()
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Each check is a zero-argument callable returning a list of Issue. Checks must
 # flag anomalies, never silently fix them.
@@ -379,6 +488,9 @@ CHECKS: list[Callable[[], list[Issue]]] = [
     check_bom_weekend_report,
     check_snapshots,
     check_releases,
+    check_wikidata_report,
+    check_match_report,
+    check_titles,
 ]
 
 

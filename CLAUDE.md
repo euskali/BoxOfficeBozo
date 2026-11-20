@@ -17,7 +17,7 @@ Hobby, non-commercial site: historical domestic box office rankings **as of any 
 - Data ships to the site as Parquet in `site/public/data/`. It is **built in CI, gitignored, and published only inside the Pages artifact.**
 
 ## Data sources (and what's banned)
-- Allowed: Purdue stat695data (GitHub), Wayback Machine and Common Crawl captures of Box Office Mojo pages, Wikidata (CC0) for titles, IMDb IDs (P345), directors and cast, BLS CPI-U (not FRED: its terms bar caching).
+- Allowed: Purdue stat695data (GitHub), Wayback Machine and Common Crawl captures of Box Office Mojo pages, Wikidata (CC0, queried through QLever at qlever.dev) for titles, IMDb IDs (P345), directors and cast, BLS CPI-U (not FRED: its terms bar caching).
 - **Never fetch boxofficemojo.com, imdb.com, or the-numbers.com live.** There's no live backend and there never will be. `boffo_etl/fetch.py` hard-blocks those hosts (and every redirect hop). Don't loosen that.
 - **Don't use the IMDb non-commercial datasets.** Their terms forbid republishing them as an online database of movie information. IMDb IDs are fine as identifiers when they come from Wikidata P345.
 

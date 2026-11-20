@@ -26,9 +26,9 @@ etl/                      Python 3.12 uv project
     sources/
       stat695.py          1982–2016 weekend snapshots (Purdue stat695data mojo.rda)
       bom_weekend.py      2017→present weekend charts from archives only (Wayback first, Common Crawl second)
-      wikidata.py         films, IMDb IDs (P345), legacy Mojo IDs (P1237), directors (P57), cast (P161); CC0
+      wikidata.py         films, IMDb IDs (P345), legacy Mojo IDs (P1237), directors (P57), cast (P161); CC0, via QLever
       cpi.py              CPI-U monthly, BLS series CUUR0000SA0 (public domain)
-    match.py              release → title matching via Wikidata + overrides
+    match.py              release → title matching via Wikidata + overrides; builds titles.parquet
     build.py              orchestrates; writes data/build/*.parquet and site/public/data/*.parquet
     checks.py             data-quality checks (also run in CI)
   tests/                  pytest (offline; synthetic fixtures only)
@@ -67,11 +67,11 @@ The repo is public, so it holds **code, docs, and cited manual CSVs only**. No s
 ## Data model (Parquet tables shipped to the site)
 
 **`titles.parquet`**: one row per *film* (re-releases grouped)
-`title_id` (IMDb tconst taken from Wikidata P345, or `bb_xxxx` if unmatched) · `wikidata_qid` (nullable) · `title` · `year` · `release_date` (original domestic) · `distributor` · `genres` · `mpaa` · `pre1982_baseline_gross` (nullable) · `baseline_source`
+`title_id` (IMDb tconst taken from Wikidata P345, or `bb_xxxx` if unmatched) · `wikidata_qid` (nullable) · `title` (the original release as charted; Wikidata's English label when only re-releases charted) · `year` · `release_date` (original domestic; the Wikidata US P577 date when Box Office Mojo gives none) · `distributor` · `genres` · `mpaa` (the original release's) · `pre1982_baseline_gross` (nullable) · `baseline_is_rental` · `baseline_source`
 
 **`releases.parquet`**: one row per *release* (original, 1985 re-release, special edition…)
-`release_id` (`legacy:<movie_id>` for stat695 and old-style 2017–2019 pages, `bom:<rl id>` for new-site releases) · `title_id` · `label` (e.g. "1997 Special Edition", or Box Office Mojo's own "2019 re-release"; null for an original) · `release_date` · `source_key` (legacy mojo id / BOM rl id) · `source` (`stat695` | `bom_weekend`) · `title` (as charted) · `distributor` · `genres` · `mpaa` · `first_weekend` · `last_weekend` · `weekends` (both counted over every source's snapshots) · `is_rerelease` · `rerelease_reason` (which detection rule fired: see `stat695.detect_rereleases`; `bom_label` for a Box Office Mojo re-release label) · `parent_release_id` · `group_source` (`auto` | `manual`) · `bom_release_id` (the new-site `rl` id; set on a stat695 release too when M2 stitched a carry-over film to it)
-- Until M3 matches titles, `title_id` is a provisional `bb_` id from the root release's legacy id (or `bb_rl…` for a new-site release), so detected re-releases already share one. New-site releases whose archived release pages link the same IMDb title share one too.
+`release_id` (`legacy:<movie_id>` for stat695 and old-style 2017–2019 pages, `bom:<rl id>` for new-site releases) · `title_id` · `label` (e.g. "1997 Special Edition", or Box Office Mojo's own "2019 re-release"; null for an original) · `release_date` · `source_key` (legacy mojo id / BOM rl id) · `source` (`stat695` | `bom_weekend`) · `title` (as charted) · `distributor` · `genres` · `mpaa` · `first_weekend` · `last_weekend` · `weekends` (both counted over every source's snapshots) · `is_rerelease` · `rerelease_reason` (which detection rule fired: see `stat695.detect_rereleases`; `bom_label` for a Box Office Mojo re-release label) · `parent_release_id` · `group_source` (`auto` | `manual`) · `bom_release_id` (the new-site `rl` id; set on a stat695 release too when M2 stitched a carry-over film to it) · `match_method` (how M3 found the title: `override`, `manual_group`, `release_page`, `p1237`, `group`, `title_year`, `fuzzy`, `rerelease_title`, `rerelease_wikidata`, or `unmatched`; see `match.py`)
+- Before M3, `title_id` is a provisional `bb_` id from the root release's legacy id (or `bb_rl…` for a new-site release), so detected re-releases already share one. New-site releases whose archived release pages link the same IMDb title share one too. M3 replaces it with the matched film's `tt` id; an unmatched release keeps it.
 
 **`snapshots.parquet`**: one row per release per weekend it charted
 `weekend_end` (date, Sunday; the chart's own end date, and `checks.py` flags any that aren't Sundays) · `release_id` · `title_id` · `rank` · `weekend_gross` · `theaters` · `total_gross` (cumulative for that release) · `weeks` (weekends in release, as charted) · `source` (`stat695` | `wayback` | `commoncrawl`) · `capture_url` (the archive capture the row came from; null for stat695) · `is_estimate`
@@ -146,6 +146,11 @@ Credits and titles come from **Wikidata (CC0)**, not the IMDb datasets. IMDb's n
 - Write `data/build/match_report.csv` (score, candidates) and apply `data/manual/id_overrides.csv`.
 - Fixing a wrong or missing Wikidata statement upstream (with a reference) beats a local override. Use an override only when that isn't possible.
 - **Accept:** ≥ 97% of total nominal gross is matched to a tconst, and 100% of the top 1,000 grossing releases. Unmatched releases keep a `bb_` id and still appear on the site.
+- *Learned from Wikidata (Nov 2026):*
+  - The Wikidata Query Service timed out (60 s) on one year of films with labels and dates. QLever (`qlever.dev`, University of Freiburg) answers the same query in about 9 s, so M3 queries QLever only, and gets labels, aliases (`en`, then `mul`), P345, P1237, sitelinks and every non-deprecated P577 date (with precision and P291 place) in the same query. No `wbgetentities` calls are needed for M3. QLever stops queries at 30 s, and a page with OPTIONAL dates hit that, so film pages join the dates and the P1237 list uses a lighter query.
+  - One snapshot a month: 120 queries (the P1237 list, films of 1890–1909, then one page per year to next year), each tagged `# BoxOfficeBozo Wikidata snapshot YYYY-MM`. A new month is new URLs, so upstream fixes and new films flow in monthly. If the month's snapshot can't be fetched, the newest complete cached one (up to a year old) is used and `checks.py` warns. Once a month's is complete, older ones are deleted from the raw cache.
+  - 14,341 items carry P1237 (Nov 2026), in the same lower-case form stat695data uses (`titanic`, `et`, `starwars7`). 738 of the 743 legacy ids among the top 1,000 releases are on one. Box Office Mojo's legacy ids don't always mean what they look like: `starwars` is Episode I, and Episode IV is `starwars4`.
+  - Title matching runs per M1/M2 group, on the group's original release, biggest first. A film already matched to another group's original release is skipped, so one film isn't claimed by two first runs. Ties within 2 points (date proximity and sitelinks included) stay unmatched and are listed in `match_report.json`.
 
 ### M4 — Credits and people (Wikidata)
 - Directors from P57 and cast from P161 on the matched film items. `wbgetentities` returns claims in statement order. Billing = the P1545 (series ordinal) qualifier when present, else statement order. Store `billing_source` so the UI and checks can tell them apart.

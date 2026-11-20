@@ -39,6 +39,15 @@ for stitched carry-overs and releases that grossed $1M or more.
 Weekends it didn't reach are marked `pending`, `checks.py` fails on them, and
 the next run continues from the cache.
 
+The M3 step (`sources/wikidata.py`) fetches one Wikidata snapshot a month from
+QLever (about 120 queries, ~25 minutes the first time each month). Matching
+(`match.py`) runs when the tables are published: it rewrites `title_id` in
+`releases` and `snapshots`, adds `releases.match_method`, writes
+`titles.parquet`, and leaves `match_report.csv` (every release, its method,
+score and best candidates) and `match_report.json` in `data/build/`. Fix a
+wrong or missing match with a cited row in `data/manual/id_overrides.csv`,
+or better, fix the Wikidata statement upstream.
+
 Scraped or derived data is never committed: `data/raw/`, `data/build/` and
 `site/public/data/` are gitignored. `data/manual/*.csv` are hand-curated, and
 every row needs a real source.
