@@ -104,6 +104,8 @@ def test_norm_and_numbers():
     assert match.base_title("Godzilla (2014)") == ("godzilla", 2014)
     assert match.base_title("Titanic (3D)") == ("titanic", None)
     assert match.base_title("Jaws (Re-issue)") == ("jaws", None)
+    assert match.own_title("Jaws 3-D") == "jaws 3 d"
+    assert match.own_title("Godzilla (2014)") == "godzilla"
 
 
 @pytest.mark.parametrize("rid, method, title_id", [
@@ -209,6 +211,58 @@ def test_late_runs_match_on_the_opening_their_weeks_counter_implies(tmp_path):
     # Without the counter, the 2024 chart date picks the 2024 film.
     plain = match.match_releases([{**jaws, "gross": 1}], films_, {}, {})
     assert plain.assign["bom:rl30"].title_id == "tt9900000"
+
+
+def test_rereleases_join_the_film_of_their_own_title(tmp_path):
+    # Box Office Mojo's Jaws re-releases (2020, 2022, 2025) came after Jaws 3-D (1983) but before
+    # the 1975 original's late run first charted (2024-12-29). They are Jaws's, not Jaws 3-D's.
+    films_ = _index(tmp_path, [*FILMS, *JAWS, film("Q1199837", "Jaws 3-D", 1983, tt="tt0085750", boms=["jaws3d"]),
+                               film("Q8400", "Ocean Wonders 3D", 2010, tt="tt8400000", boms=["oceanwonders3d"])])
+    rels = [{**rel("legacy:jaws3d", "Jaws 3-D", date(1983, 7, 24)), "gross": 39_230_274},
+            {**rel("bom:rl30", "Jaws", date(2024, 12, 29)), "gross": 260_696_045, "opened": date(1975, 6, 22)},
+            *({**rel(rid, "Jaws", first, rerelease=True), "gross": 1000}
+              for rid, first in (("bom:rl32", date(2020, 6, 21)), ("bom:rl33", date(2022, 9, 4)),
+                                 ("bom:rl34", date(2025, 8, 31)))),
+            # A 3D-only original still gets its plain re-release.
+            {**rel("legacy:oceanwonders3d", "Ocean Wonders 3D", date(2010, 2, 14)), "gross": 5000},
+            {**rel("bom:rl35", "Ocean Wonders", date(2020, 2, 16), rerelease=True), "gross": 100}]
+    res = match.match_releases(rels, films_, {}, {})
+    got = {rid: (a.method, a.title_id) for rid, a in res.assign.items()}
+    assert got["legacy:jaws3d"] == ("p1237", "tt0085750")
+    assert got["bom:rl30"] == ("title_year", "tt0073195")
+    for rid in ("bom:rl32", "bom:rl33", "bom:rl34"):
+        assert got[rid] == ("rerelease_title", "tt0073195"), rid
+    assert got["bom:rl35"] == ("rerelease_title", "tt8400000")
+
+
+def test_late_runs_of_claimed_films_join_the_run_that_opened_then(tmp_path):
+    # Wikidata's "Backside to the Future" (Q139766422, 1986, based on Q91540) is a 90 fuzzy match
+    # for "Back to the Future". It must not take the 1985 film's late run on the 2024-12-29 chart.
+    films_ = _index(tmp_path, [
+        film("Q91540", "Back to the Future", 1985, tt="tt0088763", boms=["backtothefuture"], us=date(1985, 7, 3)),
+        film("Q139766422", "Backside to the Future", 1986, tt="tt0149767"),
+        film("Q1", "Dune", 1984, tt="tt0087182", boms=["dune"], us=date(1984, 12, 14)),
+        film("Q2", "Dune", 2021, tt="tt1160419", us=date(2021, 10, 22)),
+        film("Q3", "Small Run", 2010, tt="tt3000000", us=date(2010, 3, 5)),
+    ])
+    rels = [{**rel("legacy:backtothefuture", "Back to the Future", date(1985, 7, 7)), "gross": 202_484_520},
+            {**rel("bom:rl40", "Back to the Future", date(2024, 12, 29)), "gross": 212_326_307,
+             "opened": date(1985, 7, 7)},
+            {**rel("bom:rl41", "Back to the Future", date(2025, 11, 2), rerelease=True), "gross": 7_890_200},
+            {**rel("legacy:dune", "Dune", date(1984, 12, 16)), "gross": 30_925_690},
+            {**rel("bom:rl42", "Dune", date(2021, 10, 24)), "gross": 108_327_830},
+            {**rel("bom:rl43", "Dune", date(2024, 12, 29)), "gross": 31_439_560, "opened": date(1984, 12, 16)},
+            # A late run bigger than its own first run doesn't take the film from it.
+            {**rel("bom:rl44", "Small Run", date(2010, 3, 7)), "gross": 10},
+            {**rel("bom:rl45", "Small Run", date(2024, 12, 29)), "gross": 99, "opened": date(2010, 3, 7)}]
+    res = match.match_releases(rels, films_, {}, {})
+    got = {rid: (a.method, a.title_id) for rid, a in res.assign.items()}
+    assert got["bom:rl40"] == ("rerelease_title", "tt0088763")
+    assert got["bom:rl41"] == ("rerelease_title", "tt0088763")
+    assert got["bom:rl42"] == ("title_year", "tt1160419")
+    assert got["bom:rl43"] == ("rerelease_title", "tt0087182")
+    assert got["bom:rl44"] == ("title_year", "tt3000000")
+    assert got["bom:rl45"] == ("rerelease_title", "tt3000000")
 
 
 def test_late_runs_from_snapshots():

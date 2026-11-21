@@ -20,13 +20,16 @@ Evidence, strongest first (``match_method`` on each release):
    already claimed by another original release are skipped.
 7. ``rerelease_title`` / ``rerelease_wikidata``: a re-release with no matched
    original in its group takes the one earlier matched release of the same
-   title, else the one earlier Wikidata film of that title.
+   title, else the one earlier Wikidata film of that title. An earlier
+   release's own title counts first ("Jaws 3-D" is not a Jaws re-release),
+   then that title without 3D/IMAX wording.
 
 A late run, a release that first charts over a year after it opened by Box
 Office Mojo's weeks-in-release counter (old films on the 2024-12-29 chart,
-long IMAX runs), is matched on the opening that counter implies, then like a
-re-release if that film is already claimed. Its total can include the
-earlier runs; the report lists these.
+long IMAX runs), is matched on the opening that counter implies, after the
+original releases. If its film already has a release, it joins the release
+of that title that opened within a year of it, like a re-release. Its total
+can include the earlier runs; the report lists these.
 
 Items without P345 give ``bb_<qid>`` ids. Unmatched releases keep their
 provisional ``bb_`` id and still appear on the site.
@@ -124,6 +127,11 @@ def base_title(title: str | None) -> tuple[str, int | None]:
     m = YEAR_SUFFIX_RE.search(base)
     year = int(m["year"]) if m else None
     return norm(YEAR_SUFFIX_RE.sub("", base)), year
+
+
+def own_title(title: str | None) -> str:
+    """Normalized title without a "(2016)" tag but with any re-release or format wording."""
+    return norm(YEAR_SUFFIX_RE.sub("", title or ""))
 
 
 # --- Wikidata films ----------------------------------------------------------
@@ -443,25 +451,48 @@ def match_releases(rels: list[dict], films: FilmIndex, pages: dict[str, str],
         if a.qid and any(not m.get("is_rerelease") for m in groups[g]):
             claimed[a.qid].add(g)
 
-    # 3. Original releases by title and year, biggest first.
-    for g in pending:
-        root = _root(groups[g])
-        if root.get("is_rerelease"):
-            continue
-        settle(g, match_original(root, films, lambda q, g=g: bool(claimed.get(q, set()) - {g})))
+    # 3. Original releases by title and year, biggest first, then late runs. A late run whose
+    # best film already has a release is that film's later run, so it waits for step 4: skipping
+    # the film here would hand it a lesser match ("Backside to the Future" for Back to the Future).
+    for late in (False, True):
+        for g in pending:
+            root = _root(groups[g])
+            if root.get("is_rerelease") or bool(root.get("opened")) != late:
+                continue
+            def taken(q: str, g: str = g) -> bool:
+                return bool(claimed.get(q, set()) - {g})
+
+            if late:
+                best = match_original(root, films, lambda q: False).candidates
+                if best and taken(best[0].qid):
+                    continue
+            settle(g, match_original(root, films, taken))
 
     # 4. Re-releases whose originals aren't in their group, and late runs of claimed films.
-    originals_by_title: dict[str, set[tuple[str, str | None, date]]] = defaultdict(set)
+    # Originals are found by their own title first: "Jaws 3-D" (1983) is a film of its own, not a
+    # 3-D Jaws. Only then by the title without its format wording, so an IMAX-only original still
+    # gets its plain re-release. A late run counts from its opening, not its first chart here,
+    # and joins the run that opened then (Dune 1984, not Dune 2021).
+    by_own: dict[str, set[tuple[str, str | None, date]]] = defaultdict(set)
+    by_base: dict[str, set[tuple[str, str | None, date]]] = defaultdict(set)
     for r in rels:
         a = assign.get(r["release_id"])
-        if a and not r.get("is_rerelease") and r.get("first_weekend"):
-            originals_by_title[base_title(r.get("title"))[0]].add((a.title_id, a.qid, r["first_weekend"]))
+        if a and not r.get("is_rerelease") and _first_seen(r):
+            entry = (a.title_id, a.qid, _first_seen(r))
+            by_own[own_title(r.get("title"))].add(entry)
+            by_base[base_title(r.get("title"))[0]].add(entry)
     for g in pending:
         root = _root(groups[g])
         if not (root.get("is_rerelease") or root.get("opened")) or root["release_id"] in assign:
             continue
-        base = base_title(root.get("title"))[0]
-        earlier = {(t, q) for t, q, fw in originals_by_title.get(base, ()) if fw < root["first_weekend"]}
+        own, base = own_title(root.get("title")), base_title(root.get("title"))[0]
+        opened = root.get("opened")
+        earlier: set[tuple[str, str | None]] = set()
+        for index, key in ((by_own, own), (by_own, base), (by_base, base)):
+            earlier = {(t, q) for t, q, seen in index.get(key, ())
+                       if (abs(seen - opened) <= LATE_RUN if opened else seen < root["first_weekend"])}
+            if earlier:
+                break
         if len(earlier) == 1:
             t, q = earlier.pop()
             settle(g, Outcome(Assign(t, q, "rerelease_title")))

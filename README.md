@@ -18,7 +18,7 @@ Looks like 1999. Works like 2026.
 - [x] M0 Scaffold
 - [x] M1 Ingest 1982–2016
 - [x] M2 Ingest 2017 → present
-- [ ] M3 Identity matching
+- [x] M3 Identity matching
 - [ ] M4 Credits & people
 - [ ] M5 Inflation & admissions
 - [ ] M6 Ranking engine + golden tests
