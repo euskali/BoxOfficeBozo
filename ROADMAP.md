@@ -30,7 +30,7 @@ Detailed task list: `docs/MVP_PLAN.md`.
 - Built and deployed to GitHub Pages by GitHub Actions.
 
 ## Phase 2 — Keep it current
-- Weekly scheduled run of the deploy workflow (Monday) picks up the latest archived weekend, rebuilds Parquet, and redeploys.
+- Weekly scheduled run of the deploy workflow (Monday) picks up the latest archived weekend, rebuilds Parquet, and redeploys. In place since M3, early, because it also keeps the Actions download cache from expiring.
 - Data-quality dashboard: unmatched titles, gaps in weekends, totals that went backward.
 - Manual override files reviewed through PRs.
 
