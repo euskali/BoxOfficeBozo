@@ -86,8 +86,25 @@ def test_spot_checks(con, legacy_id, title_id, qid):
     (("legacy:titanic3d", "bom:rl403015169", "bom:rl3167650561"), "tt0120338"),
     # 2010 Special Edition (stat695), "2022 Re-release"
     (("legacy:avatarspecialedition", "bom:rl2319418113"), "tt0499549"),
+    # Jaws (Q189505, P1237 "jaws", P345 tt0073195): "2020 Re-release", "2022 Re-release" and
+    # "2025 Re-release (50th Anniversary)". Not Jaws 3-D (1983, tt0085750).
+    (("bom:rl2084930305", "bom:rl550863617", "bom:rl1825800193"), "tt0073195"),
+    # Back to the Future (Q91540, P1237 "backtothefuture", P345 tt0088763): "2020 Re-release", "40th Anniversary"
+    (("bom:rl340361985", "bom:rl468746241"), "tt0088763"),
 ])
 def test_rereleases_join_their_film(con, release_ids, title_id):
     rows = con.execute("SELECT release_id, title_id, is_rerelease FROM r WHERE list_contains(?, release_id)",
                        [list(release_ids)]).fetchall()
     assert sorted(rows) == sorted((rid, title_id, True) for rid in release_ids)
+
+
+# Late runs on the archived 2024-12-29 weekend chart, whose weeks-in-release counters date them
+# to their films' first runs. Expected ids are the Wikidata items' P1237 and P345 statements,
+# read through QLever in November 2026.
+@pytest.mark.parametrize("release_id, title_id", [
+    ("bom:rl2974385665", "tt0088763"),  # Back to the Future (Q91540), 1985; not "Backside to the Future"
+    ("bom:rl3629024769", "tt0087182"),  # Dune (Q114819, P1237 "dune"), 1984; not Dune (2021)
+    ("bom:rl1802798593", "tt0084787"),  # The Thing (Q210756, P1237 "thing"), 1982; not The Thing (2011)
+])
+def test_late_runs_join_their_first_run(con, release_id, title_id):
+    assert con.execute("SELECT title_id FROM r WHERE release_id = ?", [release_id]).fetchone() == (title_id,)
