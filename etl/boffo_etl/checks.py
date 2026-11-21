@@ -481,6 +481,111 @@ def check_titles() -> list[Issue]:
     return issues
 
 
+# --- M4: credits and people -------------------------------------------------------
+CREDITS_REPORT = "credits_report.json"
+
+
+def check_credits_report() -> list[Issue]:
+    """Coverage: the share of films with a director and a top-billed cast, top films with no
+    director, and films whose credits weren't fetched (yet)."""
+    path = paths.data_build() / CREDITS_REPORT
+    if not path.is_file():
+        return []
+    name = CREDITS_REPORT
+    r = json.loads(path.read_text(encoding="utf-8"))
+    print(f"credits: month {r['month']}{'' if r['month_complete'] else ' (incomplete)'}: statements for "
+          f"{r['films_with_statements']} of {r['films']} films; {r['credits']} credits "
+          f"({r['director_credits']} director, {r['actor_credits']} actor; billing {r['billing_source']}), "
+          f"{r['people']} people ({r['people_with_imdb_id']} with an IMDb id); "
+          f"{r['films_with_director_share']:.1%} of films have a director, "
+          f"{r['films_with_top_billed_cast_share']:.1%} at least {r['top_billed']} cast; "
+          f"{r['voice_cast_films']} films have a voice cast")
+    issues: list[Issue] = []
+    if r["films_without_statements"]:
+        issues.append(Issue("warning", name, 0, f"{r['films_without_statements']} films have no Wikidata statements "
+                            f"fetched yet ({r['top_without_statements']} of the top {r['top_titles']}; fetch "
+                            f"{r['fetch']['stopped'] or 'complete'}), "
+                            + _examples(r["films_without_statements_examples"],
+                                        lambda x: f"{x['title_id']} {x['title']!r}")))
+    elif r["films_from_older_month"]:
+        issues.append(Issue("warning", name, 0, f"{r['films_from_older_month']} films' credits are from an older "
+                            f"month (this month's fetch: {r['fetch']['stopped'] or 'complete'})"))
+    if r["top_without_director"]:
+        issues.append(Issue("warning", name, 0, f"{len(r['top_without_director'])} of the top {r['top_titles']} "
+                            "films by gross have no director on Wikidata (P57), "
+                            + _examples(r["top_without_director"],
+                                        lambda x: f"{x['title_id']} {x['title']!r} (${x['gross']:,})",
+                                        limit=GAPS_LISTED)))
+    if r["items_missing_on_wikidata"]:
+        issues.append(Issue("warning", name, 0, f"{len(r['items_missing_on_wikidata'])} matched Wikidata items no "
+                            "longer exist (deleted or merged), "
+                            + _examples(r["items_missing_on_wikidata"], lambda x: f"{x['title_id']} {x['title']!r}")))
+    if r["people_without_name"]:
+        issues.append(Issue("warning", name, 0, f"{r['people_without_name']} credited people have no English or "
+                            "mul label, " + _examples([(p,) for p in r["people_without_name_examples"]],
+                                                      lambda x: x[0])))
+    return issues
+
+
+def check_credits() -> list[Issue]:
+    path, people = _site_table("credits"), _site_table("people")
+    if path is None:
+        return []
+    name = "credits.parquet"
+    issues: list[Issue] = []
+    con = _connect()
+    _view(con, "c", path)
+
+    def rows(sql: str) -> list[tuple]:
+        return con.execute(sql).fetchall()
+
+    dup = rows("SELECT title_id, person_id, role FROM c GROUP BY ALL HAVING count(*) > 1 ORDER BY 1, 2")
+    if dup:
+        issues.append(Issue("error", name, 0, f"{len(dup)} credits appear more than once, "
+                            + _examples(dup, lambda x: f"{x[0]} {x[1]} {x[2]}")))
+    bad_role = rows("SELECT DISTINCT role FROM c WHERE role IS NULL OR role NOT IN ('director', 'actor')")
+    if bad_role:
+        issues.append(Issue("error", name, 0, f"unknown roles: {[r[0] for r in bad_role]}"))
+    bad_billing = rows("""SELECT title_id, person_id, role, billing, billing_source FROM c
+                          WHERE (role = 'director' AND (billing IS NOT NULL OR billing_source IS NOT NULL))
+                             OR (role = 'actor' AND (billing IS NULL OR billing < 1
+                                 OR billing_source NOT IN ('p1545', 'statement_order')))
+                          ORDER BY 1, 2""")
+    if bad_billing:
+        issues.append(Issue("error", name, 0, f"{len(bad_billing)} credits have a billing that doesn't fit their "
+                            "role, " + _examples(bad_billing, lambda x: f"{x[0]} {x[1]} {x[2]} {x[3]} {x[4]}")))
+    gaps = rows("""SELECT title_id FROM c WHERE role = 'actor' GROUP BY title_id
+                   HAVING count(*) <> count(DISTINCT billing) OR max(billing) <> count(*) ORDER BY 1""")
+    if gaps:
+        issues.append(Issue("error", name, 0, f"{len(gaps)} films' billing isn't 1..n, " + _examples(gaps, lambda x: x[0])))
+    titles = _site_table("titles")
+    if titles is not None:
+        _view(con, "t", titles)
+        orphan = rows("SELECT DISTINCT title_id FROM c ANTI JOIN t USING (title_id) ORDER BY 1")
+        if orphan:
+            issues.append(Issue("error", name, 0, f"{len(orphan)} credited title_ids are not in titles, "
+                                + _examples(orphan, lambda x: x[0])))
+    if people is None:
+        issues.append(Issue("error", name, 0, "people.parquet is missing"))
+    else:
+        _view(con, "p", people)
+        missing = rows("SELECT DISTINCT person_id FROM c ANTI JOIN p USING (person_id) ORDER BY 1")
+        if missing:
+            issues.append(Issue("error", "people.parquet", 0, f"{len(missing)} credited people are missing, "
+                                + _examples(missing, lambda x: x[0])))
+        dup_people = rows("SELECT person_id FROM p GROUP BY 1 HAVING count(*) > 1 ORDER BY 1")
+        if dup_people:
+            issues.append(Issue("error", "people.parquet", 0, f"{len(dup_people)} person_ids appear more than once, "
+                                + _examples(dup_people, lambda x: x[0])))
+        bad_ids = rows("""SELECT person_id, imdb_id FROM p WHERE NOT regexp_full_match(coalesce(person_id, ''), 'Q[0-9]+')
+                          OR NOT regexp_full_match(coalesce(imdb_id, 'nm0000000'), 'nm[0-9]{7,}') ORDER BY 1""")
+        if bad_ids:
+            issues.append(Issue("error", "people.parquet", 0, f"{len(bad_ids)} people have malformed ids, "
+                                + _examples(bad_ids, lambda x: f"{x[0]} {x[1]}")))
+    con.close()
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Each check is a zero-argument callable returning a list of Issue. Checks must
 # flag anomalies, never silently fix them.
@@ -495,6 +600,8 @@ CHECKS: list[Callable[[], list[Issue]]] = [
     check_wikidata_report,
     check_match_report,
     check_titles,
+    check_credits_report,
+    check_credits,
 ]
 
 

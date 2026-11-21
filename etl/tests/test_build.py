@@ -62,6 +62,8 @@ def test_full_build_from_cached_rda(repo, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "stat695: 4 source rows -> 4 snapshots" in out
     assert "published snapshots.parquet: 4 rows" in out
+    # Credits (M4) run on matched titles; offline, none are matched, so there's nothing to build.
+    assert "step credits: running" in out and "no titles are matched to Wikidata items" in out
 
     site = repo / "site/public/data"
     snaps = pl.read_parquet(site / "snapshots.parquet")

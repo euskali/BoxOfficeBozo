@@ -306,12 +306,17 @@ class Fetcher:
         suffix: str | None = None,
         accept_status: tuple[int, ...] = (200,),
         validate: Callable[[bytes], None] | None = None,
+        reduce: Callable[[bytes], bytes] | None = None,
     ) -> Path:
         """Return the cached body of ``url``, downloading it first if needed (CI only).
 
         ``accept_status`` lists the final HTTP statuses whose body is worth
         caching (an index's "no captures" 404, say). ``validate`` may raise to
         refuse a body, which then isn't cached (an outage page served as 200).
+        ``reduce`` turns a validated body into the part worth keeping, which is
+        what gets cached (the meta file records the original's size and hash):
+        for answers far bigger than what's used, like Wikidata's every claim of
+        a film when only its credits are read.
         """
         check_url_policy(url)  # policy first, even for cached URLs
         cached = self._find_cached(url)
@@ -324,7 +329,12 @@ class Fetcher:
                 validate(body)
             except Exception as exc:  # an outage page served as 200, say: don't cache it
                 raise FetchError(f"{url} returned an unusable body: {exc}") from exc
-        return self._store(url, url, resp, body, final_url, suffix, {})
+        extra: dict = {}
+        if reduce is not None:
+            extra = {"reduced": True, "original_bytes": len(body),
+                     "original_sha256": hashlib.sha256(body).hexdigest()}
+            body = reduce(body)
+        return self._store(url, url, resp, body, final_url, suffix, extra)
 
     def fetch_range(self, url: str, start: int, length: int, *, suffix: str | None = ".bin") -> Path:
         """Fetch ``length`` bytes of ``url`` from ``start`` (one WARC record, say), cached by range."""

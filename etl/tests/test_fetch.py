@@ -326,3 +326,15 @@ def test_retry_delays_back_off(fetch_on):
     with pytest.raises(FetchError, match="4 attempts"):
         f.fetch("https://web.archive.org/down")
     assert sleeps == [10.0, 30.0, 90.0]
+
+
+def test_reduce_caches_only_what_is_kept(repo, fetch_on):
+    big = json.dumps({"keep": [1, 2], "drop": "x" * 5000}).encode()
+    f, rec, _ = make(lambda r: httpx.Response(200, content=big, headers={"content-type": "application/json"}))
+    url = "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q1"
+    kept = lambda body: json.dumps({"keep": json.loads(body)["keep"]}).encode()  # noqa: E731
+    path = f.fetch(url, validate=lambda b: json.loads(b), reduce=kept)
+    assert json.loads(path.read_bytes()) == {"keep": [1, 2]}
+    meta = json.loads(path.with_name(path.name + ".meta.json").read_text())
+    assert meta["reduced"] is True and meta["original_bytes"] == len(big) and meta["bytes"] == path.stat().st_size
+    assert f.fetch(url, reduce=kept) == path and len(rec.requests) == 1  # cached: never fetched again
