@@ -157,6 +157,70 @@ def test_bigger_release_claims_a_film_first(films):
     assert res.assign["bom:rl20"].method == "unmatched"
 
 
+def _index(tmp_path, films_):
+    path = tmp_path / "wikidata_films.parquet"
+    wd.merge_items([{**f, "dates": list(f["dates"])} for f in films_]).write_parquet(path)
+    return match.load_films(path)
+
+
+# A re-release's own Mojo id can sit on a version item with no IMDb id (Q10382726 "Titanic 3D").
+VERSION = film("Q10382726", "Titanic 3D", 2012, boms=["titanic3d"], sitelinks=2)
+
+
+def test_rerelease_on_a_version_item_joins_its_film(tmp_path):
+    films_ = _index(tmp_path, [*FILMS, VERSION])
+    grouped = rel("legacy:titanic3d", "Titanic 3D", date(2012, 4, 8), tid="bb_titanic", rerelease=True)
+    alone = {**grouped, "release_id": "legacy:titanic3dx", "title_id": "bb_titanic3dx", "source_key": "titanic3d"}
+    rels = [{**rel("legacy:titanic", "Titanic", date(1997, 12, 21)), "gross": 600}, {**grouped, "gross": 50},
+            {**alone, "gross": 40}]
+    res = match.match_releases(rels, films_, {}, {})
+    assert (res.assign["legacy:titanic3d"].method, res.assign["legacy:titanic3d"].title_id) == ("group", "tt0120338")
+    assert (res.assign["legacy:titanic3dx"].method, res.assign["legacy:titanic3dx"].title_id) == (
+        "rerelease_title", "tt0120338")
+    assert res.notes["p1237_version_items"][0] == "legacy:titanic3d 'Titanic 3D': titanic3d -> Q10382726"
+    assert "group_conflicts" not in res.notes
+
+
+def test_version_item_is_the_last_resort(tmp_path):
+    films_ = _index(tmp_path, [VERSION])
+    r = rel("legacy:titanic3d", "Titanic 3D", date(2012, 4, 8), rerelease=True)
+    res = match.match_releases([{**r, "gross": 50}], films_, {}, {})
+    assert (res.assign["legacy:titanic3d"].method, res.assign["legacy:titanic3d"].title_id) == ("p1237", "bb_q10382726")
+
+
+JAWS = [film("Q189", "Jaws", 1975, tt="tt0073195", us=date(1975, 6, 20), sitelinks=80),
+        film("Q9900", "Jaws", 2024, tt="tt9900000")]  # a same-titled film from the year it charted
+
+
+def test_late_runs_match_on_the_opening_their_weeks_counter_implies(tmp_path):
+    films_ = _index(tmp_path, [*FILMS, *JAWS,
+                               film("Q501", "Shrek 2", 2004, tt="tt0298148", boms=["shrek2"], us=date(2004, 5, 19))])
+    jaws = rel("bom:rl30", "Jaws", date(2024, 12, 29))
+    shrek = rel("bom:rl31", "Shrek 2", date(2024, 12, 29))
+    rels = [{**rel("legacy:shrek2", "Shrek 2", date(2004, 5, 23)), "gross": 441_220_800},
+            {**jaws, "gross": 260_696_045, "opened": date(1975, 6, 22)},
+            {**shrek, "gross": 441_550_292, "opened": date(2004, 5, 23)}]
+    res = match.match_releases(rels, films_, {}, {})
+    assert (res.assign["bom:rl30"].method, res.assign["bom:rl30"].title_id) == ("title_year", "tt0073195")
+    # Shrek 2 is claimed by its first run, which this one continues: it joins it like a re-release.
+    assert (res.assign["bom:rl31"].method, res.assign["bom:rl31"].title_id) == ("rerelease_title", "tt0298148")
+    assert [n.split(":")[0] for n in res.notes["late_runs"]] == ["bom", "bom"]
+    assert res.notes["late_runs"][0].startswith("bom:rl30 'Jaws': opened 1975-06-22 by its weeks counter")
+    # Without the counter, the 2024 chart date picks the 2024 film.
+    plain = match.match_releases([{**jaws, "gross": 1}], films_, {}, {})
+    assert plain.assign["bom:rl30"].title_id == "tt9900000"
+
+
+def test_late_runs_from_snapshots():
+    snaps = pl.DataFrame({
+        "release_id": ["bom:rl24217089", "bom:rl24217089", "bom:new", "bom:expanded", "bom:none"],
+        "weekend_end": [date(2024, 12, 29), date(2025, 1, 5), date(2024, 12, 29), date(2024, 12, 29),
+                        date(2024, 12, 29)],
+        "weeks": [1076, 1077, 1, 30, None],
+    })
+    assert match.late_runs(snaps) == {"bom:rl24217089": date(2004, 5, 23)}
+
+
 # --- apply: the published tables ----------------------------------------------------------
 
 def test_apply_rewrites_title_ids_and_builds_titles(repo, films):

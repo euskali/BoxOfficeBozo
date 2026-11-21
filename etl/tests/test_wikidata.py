@@ -116,6 +116,16 @@ def test_parse_items():
     assert films[1]["label"] == "Amélie" and films[1]["tt"] is None
 
 
+def test_bare_item_ids_are_not_labels():
+    """QLever can give an item whose only label is "mul" its bare id as an English label."""
+    def row(qid, en, mul=""):
+        return {"item": E + qid, "labelEn": en, "labelMul": mul, "aliases": "Ready Player 1"}
+    films = wd.parse_items([row("Q22000542", "Q22000542|Ready Player One"), row("Q44578", "", "Titanic"),
+                            row("Q5", "Q5")], "test")
+    assert [(f["label"], f["aliases"]) for f in films] == [
+        ("Ready Player One", ["Ready Player 1"]), ("Titanic", ["Ready Player 1"]), (None, ["Ready Player 1"])]
+
+
 def test_validate_rejects_outage_pages():
     with pytest.raises(ValueError):
         wd.validate_sparql(b"<html>Service unavailable</html>")
@@ -186,6 +196,20 @@ def test_complete_snapshot_prunes_older_ones(repo, monkeypatch):
     assert not any(f.is_cached(p.url) for p in wd.snapshot_pages("2026-10"))
     assert all(f.is_cached(p.url) for p in wd.snapshot_pages("2026-11"))
     assert other.exists()
+
+
+def test_complete_snapshot_prunes_its_own_older_queries(repo, monkeypatch):
+    """A changed query is a new URL in the same month: the old version's answers go."""
+    monkeypatch.setenv("BOFFO_FETCH", "1")
+    old_full = wd.FULL
+    monkeypatch.setattr(wd, "FULL", old_full.replace("GROUP BY ?item", "GROUP BY ?item  # old version"))
+    wd.ingest(world().fetcher(), TODAY, [], log=lambda *a: None)
+    films_pages = len(wd.snapshot_pages("2026-11")) - 1  # all but the P1237 page use FULL
+    monkeypatch.setattr(wd, "FULL", old_full)
+    snap = wd.ingest(world().fetcher(), TODAY, ["tt7000001"], log=lambda *a: None)
+    assert snap.report["pruned_cache_entries"] == films_pages
+    f = world().fetcher()
+    assert all(f.is_cached(p.url) for p in wd.snapshot_pages("2026-11"))
 
 
 def test_offline_without_a_cache_raises(repo):
