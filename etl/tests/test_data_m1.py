@@ -15,7 +15,7 @@ import polars as pl
 import pytest
 
 from boffo_etl import paths
-from boffo_etl.build import PUBLISHED_RELEASE_SCHEMA
+from boffo_etl.build import RELEASES_OUT_SCHEMA
 from boffo_etl.manual import TITLE_ID_RE
 from boffo_etl.sources.stat695 import SNAPSHOT_SCHEMA
 
@@ -49,7 +49,7 @@ def test_schemas():
     snaps = pl.read_parquet_schema(_require(paths.site_data() / "snapshots.parquet"))
     rels = pl.read_parquet_schema(_require(paths.site_data() / "releases.parquet"))
     assert dict(snaps) == SNAPSHOT_SCHEMA
-    assert dict(rels) == PUBLISHED_RELEASE_SCHEMA
+    assert dict(rels) == RELEASES_OUT_SCHEMA  # with M3's match_method
 
 
 def test_snapshot_count_matches_the_source(report, con):

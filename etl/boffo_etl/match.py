@@ -8,7 +8,9 @@ Evidence, strongest first (``match_method`` on each release):
 3. ``release_page``: the ``tt`` id on the release's archived Box Office Mojo
    release page, found on Wikidata by P345.
 4. ``p1237``: a Wikidata item whose legacy Box Office Mojo film ID (P1237)
-   is the release's legacy id.
+   is the release's legacy id. For a re-release, an item without an IMDb id
+   (a version, like Q10382726 "Titanic 3D") is used only if nothing below
+   finds the film itself.
 5. ``group``: releases M1/M2 grouped into one provisional title (re-release
    detection, shared release-page titles) follow a matched member.
 6. ``title_year`` / ``fuzzy``: the title of the group's original release
@@ -19,6 +21,12 @@ Evidence, strongest first (``match_method`` on each release):
 7. ``rerelease_title`` / ``rerelease_wikidata``: a re-release with no matched
    original in its group takes the one earlier matched release of the same
    title, else the one earlier Wikidata film of that title.
+
+A late run, a release that first charts over a year after it opened by Box
+Office Mojo's weeks-in-release counter (old films on the 2024-12-29 chart,
+long IMAX runs), is matched on the opening that counter implies, then like a
+re-release if that film is already claimed. Its total can include the
+earlier runs; the report lists these.
 
 Items without P345 give ``bb_<qid>`` ids. Unmatched releases keep their
 provisional ``bb_`` id and still appear on the site.
@@ -61,6 +69,7 @@ SITELINK_BONUS_MAX = 3.0
 RERELEASE_SITELINK_RATIO = 3  # an unclaimed re-release candidate must be this much better known
 US = "Q30"
 CANDIDATES_KEPT = 3
+LATE_RUN = timedelta(days=365)  # first charted this long after opening (weeks counter): a later run
 TOP_RELEASES = 1000
 MATCHED_GROSS_TARGET = 0.97
 LISTED = 50  # entries kept per report list
@@ -234,8 +243,13 @@ class Outcome:
     why: str = ""
 
 
+def _first_seen(r: dict) -> date | None:
+    """The release's opening weekend's Sunday: its first chart here, or the late run's opening."""
+    return r.get("opened") or r.get("first_weekend")
+
+
 def _release_year_hints(r: dict) -> set[int]:
-    years = {r["first_weekend"].year} if r.get("first_weekend") else set()
+    years = {_first_seen(r).year} if _first_seen(r) else set()
     if r.get("release_date"):
         years.add(r["release_date"].year)
     tagged = base_title(r.get("title"))[1]
@@ -246,7 +260,7 @@ def _release_year_hints(r: dict) -> set[int]:
 
 def _bonus(film: Film, r: dict) -> float:
     targets = [d for d in (r.get("release_date"),
-                           r["first_weekend"] - timedelta(days=2) if r.get("first_weekend") else None) if d]
+                           _first_seen(r) - timedelta(days=2) if _first_seen(r) else None) if d]
     bonus = 0.0
     for d, place in film.dates:
         if any(abs(d - t) <= DATE_WINDOW for t in targets):
@@ -330,8 +344,9 @@ class MatchResult:
 def match_releases(rels: list[dict], films: FilmIndex, pages: dict[str, str],
                    overrides: dict[str, dict]) -> MatchResult:
     """``rels`` need release_id, title_id (provisional), source_key, bom_release_id, title,
-    release_date, first_weekend, is_rerelease, group_source and gross."""
+    release_date, first_weekend, is_rerelease, group_source and gross; ``opened`` for late runs."""
     assign: dict[str, Assign] = {}
+    versions: dict[str, Assign] = {}  # re-releases whose P1237 item has no IMDb id: the last resort
     notes: dict[str, list[str]] = defaultdict(list)
 
     # 1. Direct evidence, release by release.
@@ -367,8 +382,13 @@ def match_releases(rels: list[dict], films: FilmIndex, pages: dict[str, str],
             notes["release_page_vs_p1237"].append(
                 f"{rid} {r.get('title')!r}: page {via_page.title_id} ({via_page.qid}), "
                 f"P1237 {via_bom.title_id} ({via_bom.qid}); the page wins")
-        if via_page or via_bom:
-            assign[rid] = via_page or via_bom
+        if via_page:
+            assign[rid] = via_page
+        elif via_bom and r.get("is_rerelease") and films.by_qid[via_bom.qid].tt is None:
+            versions[rid] = via_bom
+            notes["p1237_version_items"].append(f"{rid} {r.get('title')!r}: {via_bom.detail} -> {via_bom.qid}")
+        elif via_bom:
+            assign[rid] = via_bom
 
     # 2. Provisional groups follow their matched members.
     groups: dict[str, list[dict]] = defaultdict(list)
@@ -430,7 +450,7 @@ def match_releases(rels: list[dict], films: FilmIndex, pages: dict[str, str],
             continue
         settle(g, match_original(root, films, lambda q, g=g: bool(claimed.get(q, set()) - {g})))
 
-    # 4. Re-releases whose originals aren't in their group.
+    # 4. Re-releases whose originals aren't in their group, and late runs of claimed films.
     originals_by_title: dict[str, set[tuple[str, str | None, date]]] = defaultdict(set)
     for r in rels:
         a = assign.get(r["release_id"])
@@ -438,7 +458,7 @@ def match_releases(rels: list[dict], films: FilmIndex, pages: dict[str, str],
             originals_by_title[base_title(r.get("title"))[0]].add((a.title_id, a.qid, r["first_weekend"]))
     for g in pending:
         root = _root(groups[g])
-        if not root.get("is_rerelease") or root["release_id"] in assign:
+        if not (root.get("is_rerelease") or root.get("opened")) or root["release_id"] in assign:
             continue
         base = base_title(root.get("title"))[0]
         earlier = {(t, q) for t, q, fw in originals_by_title.get(base, ()) if fw < root["first_weekend"]}
@@ -450,6 +470,14 @@ def match_releases(rels: list[dict], films: FilmIndex, pages: dict[str, str],
                               + ", ".join(sorted(t for t, _ in earlier))[:200]))
         else:
             settle(g, match_rerelease_wikidata(root, films, claimed))
+
+    for rid, a in versions.items():
+        if rid not in assign:
+            assign[rid] = a
+    for r in rels:
+        if r.get("opened"):
+            notes["late_runs"].append(f"{r['release_id']} {r.get('title')!r}: opened {r['opened']} by its weeks "
+                                      f"counter, first charted {r.get('first_weekend')}, total {r.get('gross') or 0:,}")
 
     # Unmatched releases keep their provisional ids.
     for r in rels:
@@ -471,6 +499,22 @@ class Applied:
     snapshots: pl.DataFrame
     titles: pl.DataFrame
     report: dict
+
+
+def late_runs(snapshots: pl.DataFrame) -> dict[str, date]:
+    """Release -> the opening its weeks-in-release counter implies, for releases first charted
+    over LATE_RUN after it (Box Office Mojo keeps counting weeks from a film's first opening)."""
+    if "weeks" not in snapshots.columns:
+        return {}
+    first = (snapshots.filter(pl.col("weeks") >= 1).sort("weekend_end")
+             .group_by("release_id", maintain_order=True).first())
+    out = {}
+    for rid, sunday, weeks in zip(first["release_id"].to_list(), first["weekend_end"].to_list(),
+                                  first["weeks"].to_list()):
+        opened = sunday - timedelta(weeks=weeks - 1)
+        if sunday - opened > LATE_RUN:
+            out[rid] = opened
+    return out
 
 
 def release_pages(build_dir: Path) -> dict[str, str]:
@@ -617,6 +661,9 @@ def apply(releases: pl.DataFrame, snapshots: pl.DataFrame, build_dir: Path | Non
 
     gross = snapshots.group_by("release_id").agg(pl.col("total_gross").max().alias("gross"))
     rels = releases.join(gross, on="release_id", how="left").to_dicts()
+    opened = late_runs(snapshots)
+    for r in rels:
+        r["opened"] = opened.get(r["release_id"])
     result = match_releases(rels, films, release_pages(build_dir), overrides)
     a = result.assign
 

@@ -19,7 +19,8 @@ page returned are looked up by P345 directly.
 
 If this month's snapshot can't be fetched, the newest complete cached one
 (up to a year old) is used and the report says so. Once this month's is
-complete, older snapshots are deleted from the raw cache.
+complete, every cached answer it didn't use (older snapshots, older versions
+of the queries) is deleted from the raw cache.
 
 Output, in ``data/build/``: ``wikidata_films.parquet`` (one row per item) and
 ``wikidata_report.json``.
@@ -48,6 +49,7 @@ FALLBACK_MONTHS = 12
 MARKER = "# BoxOfficeBozo Wikidata snapshot {stamp} ({what})"
 MARKER_RE = re.compile(r"^# BoxOfficeBozo Wikidata snapshot (?P<stamp>\d{4}-\d{2}) ")
 TT_RE = re.compile(r"^tt\d{7,}$")
+QID_RE = re.compile(r"^Q\d+$")
 
 PREFIXES = """PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
@@ -62,7 +64,10 @@ PREFIX wikibase: <http://wikiba.se/ontology#>
 # The selector subquery picks the items; the rest describes each one, one row per item.
 # Film pages join the dates (every item there has one); QLever's 30 s limit is hit when
 # they are OPTIONAL. The P1237 and P345 lookups use the light form, with no dates.
-FULL = """SELECT ?item (SAMPLE(?en) AS ?labelEn) (SAMPLE(?mul) AS ?labelMul) (SAMPLE(?sl) AS ?sitelinks)
+# Labels are all collected, not sampled: for an item whose only label is "mul", QLever's
+# English label can also be the bare item id (Q22000542, Ready Player One, Nov 2026).
+FULL = """SELECT ?item (GROUP_CONCAT(DISTINCT ?en; separator="|") AS ?labelEn)
+  (GROUP_CONCAT(DISTINCT ?mul; separator="|") AS ?labelMul) (SAMPLE(?sl) AS ?sitelinks)
   (GROUP_CONCAT(DISTINCT ?imdb; separator="|") AS ?imdbs)
   (GROUP_CONCAT(DISTINCT ?bom; separator="|") AS ?boms)
   (GROUP_CONCAT(DISTINCT ?date; separator="|") AS ?dates)
@@ -81,7 +86,8 @@ WHERE {{
   OPTIONAL {{ ?item skos:altLabel ?alias . FILTER(LANG(?alias) = "en" || LANG(?alias) = "mul") }}
 }}
 GROUP BY ?item"""
-LIGHT = """SELECT ?item (SAMPLE(?en) AS ?labelEn) (SAMPLE(?mul) AS ?labelMul) (SAMPLE(?sl) AS ?sitelinks)
+LIGHT = """SELECT ?item (GROUP_CONCAT(DISTINCT ?en; separator="|") AS ?labelEn)
+  (GROUP_CONCAT(DISTINCT ?mul; separator="|") AS ?labelMul) (SAMPLE(?sl) AS ?sitelinks)
   (GROUP_CONCAT(DISTINCT ?imdb; separator="|") AS ?imdbs)
   (GROUP_CONCAT(DISTINCT ?bom; separator="|") AS ?boms)
 WHERE {{
@@ -233,8 +239,11 @@ def parse_items(rows: list[dict[str, str]], origin: str) -> list[dict]:
             continue
         qid = item.rsplit("/", 1)[1]
         tts = sorted({t for t in _split(r.get("imdbs")) if TT_RE.match(t)})
-        label = r.get("labelEn") or r.get("labelMul") or None
-        aliases = sorted({a for a in _split(r.get("aliases")) if a != label})
+        # English first, then mul; a bare item id isn't a label. The rest are aliases.
+        labels = [v for key in ("labelEn", "labelMul") for v in sorted(_split(r.get(key)))
+                  if not QID_RE.match(v)]
+        label = labels[0] if labels else None
+        aliases = sorted({a for a in [*_split(r.get("aliases")), *labels] if a != label and not QID_RE.match(a)})
         dates = [d for d in (parse_date(v) for v in _split(r.get("dates"))) if d is not None]
         dates.sort(key=lambda d: (d["year"], d["date"] or date.min, d["place"] or ""))
         try:
@@ -298,8 +307,9 @@ def release_page_tts(build_dir: Path) -> list[str]:
     return sorted({t for t in df["tt_id"].drop_nulls().to_list() if TT_RE.match(t)})
 
 
-def prune_snapshots(keep: str) -> int:
-    """Delete cached QLever answers of snapshots other than ``keep``. Returns how many."""
+def prune_snapshots(keep: set[str]) -> int:
+    """Delete cached QLever answers of ours that this run didn't use (``keep`` URLs): older
+    snapshots, and this month's from an earlier version of the queries. Returns how many."""
     directory = paths.data_raw() / "http" / (urlsplit(ENDPOINT).hostname or "")
     removed = 0
     if not directory.is_dir():
@@ -310,8 +320,7 @@ def prune_snapshots(keep: str) -> int:
         except (OSError, json.JSONDecodeError):
             continue
         query = parse_qs(urlsplit(url).query).get("query", [""])[0]
-        m = MARKER_RE.match(query)
-        if not m or m["stamp"] == keep:
+        if not MARKER_RE.match(query) or url in keep:
             continue
         body = meta.with_name(meta.name.removesuffix(".meta.json"))
         body.unlink(missing_ok=True)
@@ -349,10 +358,13 @@ def ingest(fetcher: Fetcher, today: date, release_tts: list[str], log=print) -> 
     missing = [t for t in release_tts if t not in known]
     lookup = {"asked": len(missing), "found": 0, "error": None}
     extra: list[dict] = []
+    used = {p.url for p in snapshot_pages(stamp)}
     for i in range(0, len(missing), IMDB_BATCH):
         batch = missing[i:i + IMDB_BATCH]
+        page = Page("P345 lookup", query_url(imdb_query(batch, current)))
+        used.add(page.url)
         try:
-            extra.extend(_read(fetcher, Page("P345 lookup", query_url(imdb_query(batch, current)))))
+            extra.extend(_read(fetcher, page))
         except FetchError as exc:
             lookup["error"] = str(exc)
             log(f"  wikidata: P345 lookup failed, {len(missing) - i} release-page tt ids left unresolved ({exc})")
@@ -362,7 +374,7 @@ def ingest(fetcher: Fetcher, today: date, release_tts: list[str], log=print) -> 
         found = set(films.explode("tts")["tts"].drop_nulls().to_list())
         lookup["found"] = sum(1 for t in missing if t in found)
 
-    pruned = prune_snapshots(current) if stale_reason is None else 0
+    pruned = prune_snapshots(used) if stale_reason is None else 0
     bom = films.filter(pl.col("bom_ids").list.len() > 0)
     multi_bom = (bom.explode("bom_ids").group_by("bom_ids").agg(pl.col("qid").sort())
                  .filter(pl.col("qid").list.len() > 1).sort("bom_ids"))

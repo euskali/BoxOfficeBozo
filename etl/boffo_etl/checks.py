@@ -385,6 +385,10 @@ MATCH_NOTES = {
     "release_page_vs_p1237": "releases whose archived release page and Wikidata P1237 disagree (the page wins)",
     "release_page_tt_not_on_wikidata": "release-page IMDb ids with no Wikidata item (P345)",
     "p1237_on_several_items": "releases whose legacy id is on several Wikidata items (the best-known is used)",
+    "p1237_version_items": "re-releases whose legacy id is on a Wikidata item with no IMDb id, a version "
+                           "(matched to the film itself where possible)",
+    "late_runs": "releases first charted over a year after they opened (weeks-in-release counter); "
+                 "their totals can include the earlier runs",
 }
 
 
