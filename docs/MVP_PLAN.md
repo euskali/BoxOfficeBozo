@@ -26,7 +26,9 @@ etl/                      Python 3.12 uv project
     sources/
       stat695.py          1982–2016 weekend snapshots (Purdue stat695data mojo.rda)
       bom_weekend.py      2017→present weekend charts from archives only (Wayback first, Common Crawl second)
-      wikidata.py         films, IMDb IDs (P345), legacy Mojo IDs (P1237), directors (P57), cast (P161); CC0, via QLever
+      wikidata.py         films, IMDb IDs (P345), legacy Mojo IDs (P1237); CC0, via QLever
+      credits.py          directors (P57), cast (P161) and voice actors (P725) of the matched films, in statement order
+                          (Wikidata API), and the people's names and IMDb IDs (QLever); runs after match.py
       cpi.py              CPI-U monthly, BLS series CUUR0000SA0 (public domain)
     match.py              release → title matching via Wikidata + overrides; builds titles.parquet
     build.py              orchestrates; writes data/build/*.parquet and site/public/data/*.parquet
@@ -83,7 +85,7 @@ The repo is public, so it holds **code, docs, and cited manual CSVs only**. No s
 - Add one row per title at its first appearance. Pre-1982 baseline titles get a row at `1982-01-01` carrying the baseline.
 
 **`people.parquet`** `person_id` (Wikidata QID) · `imdb_id` (nconst from Wikidata P345, nullable) · `name` (Wikidata English label)
-**`credits.parquet`** `title_id` · `person_id` · `role` (`director` | `actor`) · `billing` (int: the P1545 series-ordinal qualifier when present, else Wikidata statement order; null for directors) · `billing_source` (`p1545` | `statement_order`)
+**`credits.parquet`** `title_id` · `person_id` · `role` (`director` | `actor`) · `billing` (int, 1 = top billed: actors with a P1545 series-ordinal qualifier first, in ordinal order, then the rest in Wikidata statement order; null for directors) · `billing_source` (`p1545` | `statement_order`, where that actor's place came from; null for directors)
 **`cpi.parquet`** `month` · `cpi`  **`ticket_prices.parquet`** `year` · `avg_price` · `source` · `is_interpolated`
 
 Credits and titles come from **Wikidata (CC0)**, not the IMDb datasets. IMDb's non-commercial terms say the data "must not be altered/republished/resold/repurposed to create any kind of online/offline database of movie information", which a public site would do. IMDb IDs appear only as identifiers, read from Wikidata P345.
@@ -165,6 +167,12 @@ Credits and titles come from **Wikidata (CC0)**, not the IMDb datasets. IMDb's n
 - Actor rollup rule (configurable; default **top 4 billed**). Directors: all credited directors.
 - `checks.py` reports the share of titles with ≥1 director and ≥4 cast, and warns on top-1,000 titles with no director.
 - **Accept:** spot checks pass. Spielberg's titles include Jaws, E.T. and Jurassic Park. Tom Hanks has Toy Story and Forrest Gump, within his top 4 billed.
+- *Learned from Wikidata (Nov 2026):*
+  - Animated films list their cast as voice actors (P725), not cast members (P161): Toy Story, Frozen and Toy Story 3 have no P161 at all, and Shrek 2's only one has no value. A film's cast is its longer list of the two, then anyone only in the other. Tom Hanks is Toy Story's first P725 statement.
+  - Statement order isn't in RDF, so QLever can't give it. `wbgetentities` (www.wikidata.org, 50 items a request) does, but it returns every claim of every film: 11 MB for the 50 biggest films, about 1.4 GB for all 16,180 matched ones. `fetch.py` can now *reduce* an answer before caching it, and only the P57, P161 and P725 statements (value, rank, P1545) are kept: 0.5% of the size. The meta file records the original's size and hash.
+  - Names and IMDb person ids come from QLever, 200 films a query (about 8 s and a 4 kB URL for the 200 biggest). Statements use `p:`/`ps:`, not `wdt:`, so a film whose cast has one preferred statement still returns everyone.
+  - Requests carry the month (`requestid` for the API, a `# BoxOfficeBozo Wikidata credits YYYY-MM` comment for QLever), so credits refresh monthly, like the M3 snapshot: 324 API requests and 81 queries, about 40 minutes. Films go biggest first, under a 45-minute budget (`BOFFO_CREDITS_MINUTES`) that also stops 300 minutes into the build (`BOFFO_BUILD_MINUTES`, the job times out at 330). A film not fetched yet this month keeps its newest older answer, and older months are deleted once the current one is complete. New films during a month get requests of their own, so cached ones stay valid.
+  - P1545 ordinals are on 641 of 2,694 actor credits (24%) in a sample of 105 films (the 50 biggest, 50 at random, and the accept films), mostly recent studio films, and can disagree with statement order (The Force Awakens: Ford, Hamill, Fisher). Without them, statement order usually follows billing (Titanic, Avatar, Forrest Gump) but not always: Frozen's voice cast and Jurassic Park's cast were entered roughly alphabetically. Fixing the order upstream (adding P1545) is the remedy. `billing_source` says which applied, so M6's top-4 rule and the UI can tell.
 
 ### M5 — Inflation and admissions
 - CPI-U monthly from BLS (series `CUUR0000SA0`, U.S. city average, not seasonally adjusted, 1913 onward; public domain, cite BLS), fetched in CI into `cpi.parquet`. Use the BLS Public Data API (v1 needs no key but allows 10 years per query and 25 queries per day, so about 12 calls cover 1913 onward) or the `download.bls.gov` flat file. Don't use FRED: its terms bar scraping and caching its content.

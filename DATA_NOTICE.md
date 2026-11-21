@@ -27,7 +27,7 @@ Box Office Mojo and IMDb are trademarks of IMDb.com, Inc. Other trademarks belon
 
 ### Films, directors, and cast: Wikidata
 - **What:** film titles, release dates, genres, directors, cast, and identifiers. IMDb IDs (Wikidata property P345) are used only as identifiers and links.
-- **How:** we query Wikidata through QLever (https://qlever.dev), a public SPARQL endpoint run by the University of Freiburg, once a month. Each release is matched to a Wikidata film by Wikidata's own Box Office Mojo and IMDb ID statements, or by title and year.
+- **How:** we query Wikidata through QLever (https://qlever.dev), a public SPARQL endpoint run by the University of Freiburg, once a month. Each release is matched to a Wikidata film by Wikidata's own Box Office Mojo and IMDb ID statements, or by title and year. Directors and cast are read from the Wikidata API (https://www.wikidata.org/w/api.php) once a month, in the order they appear on Wikidata, which we use as billing order unless a statement gives its own position. People's names and IMDb IDs come from QLever.
 - **Terms:** Wikidata's structured data is released under CC0 1.0 (https://www.wikidata.org/wiki/Wikidata:Licensing). Attribution isn't required, but we credit Wikidata and its contributors.
 - We do **not** use the IMDb non-commercial datasets. Their terms don't allow republishing them as an online database of movie information.
 

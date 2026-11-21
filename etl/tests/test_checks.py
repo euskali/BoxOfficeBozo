@@ -328,3 +328,73 @@ def test_titles_cover_every_release(repo, capsys):
     assert "1 release title_ids are missing from titles, e.g. bb_b" in out
     assert "1 titles have neither a release nor a baseline, e.g. tt0000001" in out
     assert "titles with an IMDb id have no Wikidata item" in out
+
+
+# --- M4: credits -------------------------------------------------------------------
+
+def credits_report(**kw) -> dict:
+    r = {"month": "2026-11", "month_complete": True, "fetch": {"planned": 2, "done": 2, "stopped": None},
+         "films": 2, "films_with_statements": 2, "films_from_older_month": 0, "films_without_statements": 0,
+         "films_without_statements_examples": [], "items_missing_on_wikidata": [], "voice_cast_films": 1,
+         "credits": 6, "director_credits": 2, "actor_credits": 4,
+         "billing_source": {"p1545": 0, "statement_order": 4}, "people": 5, "people_with_imdb_id": 2,
+         "people_without_name": 0, "people_without_name_examples": [], "top_billed": 4,
+         "films_with_director": 2, "films_with_director_share": 1.0, "films_with_top_billed_cast": 1,
+         "films_with_top_billed_cast_share": 0.5, "top_titles": 1000, "top_without_director": [],
+         "top_without_statements": 0}
+    return {**r, **kw}
+
+
+def write_credits(repo, credits: list[tuple], people: list[tuple]) -> None:
+    from boffo_etl.sources.credits import CREDITS_SCHEMA, PEOPLE_SCHEMA
+
+    site = repo / "site" / "public" / "data"
+    site.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame(credits, schema=CREDITS_SCHEMA, orient="row").write_parquet(site / "credits.parquet")
+    pl.DataFrame(people, schema=PEOPLE_SCHEMA, orient="row").write_parquet(site / "people.parquet")
+
+
+GOOD_CREDITS = [("tt0000001", "Q1", "director", None, None), ("tt0000001", "Q2", "actor", 1, "statement_order"),
+                ("tt0000001", "Q3", "actor", 2, "p1545")]
+GOOD_PEOPLE = [("Q1", "nm0000229", "Steven Spielberg"), ("Q2", None, "A"), ("Q3", None, "B")]
+
+
+def test_clean_credits_pass(repo, capsys):
+    write_build_json(repo, "credits_report.json", credits_report())
+    write_credits(repo, GOOD_CREDITS, GOOD_PEOPLE)
+    code, out = run(capsys)
+    assert code == 0, out
+    assert "credits: month 2026-11: statements for 2 of 2 films; 6 credits (2 director, 4 actor" in out
+    assert "100.0% of films have a director, 50.0% at least 4 cast; 1 films have a voice cast" in out
+
+
+def test_credit_integrity_errors(repo, capsys):
+    write_credits(repo, [*GOOD_CREDITS, ("tt0000001", "Q2", "actor", 1, "statement_order"),
+                         ("tt0000001", "Q4", "director", 3, None), ("tt0000001", "Q5", "actor", 7, "guess"),
+                         ("tt0000001", "Q6", "producer", None, None)],
+                  [*GOOD_PEOPLE, ("Q4", "tt1", "D"), ("Q4", None, "D"), ("Q5", None, "E")])
+    write_titles(repo, [{"title_id": "tt0000002"}])
+    code, out = run(capsys)
+    assert code == 1
+    for message in ("1 credits appear more than once, e.g. tt0000001 Q2 actor", "unknown roles: ['producer']",
+                    "2 credits have a billing that doesn't fit their role",
+                    "1 films' billing isn't 1..n, e.g. tt0000001",
+                    "1 credited title_ids are not in titles, e.g. tt0000001",
+                    "1 credited people are missing, e.g. Q6", "1 person_ids appear more than once, e.g. Q4",
+                    "people have malformed ids, e.g. Q4 tt1"):
+        assert message in out, message
+
+
+def test_credit_coverage_warnings(repo, capsys):
+    write_build_json(repo, "credits_report.json", credits_report(
+        month_complete=False, fetch={"planned": 9, "done": 3, "stopped": "time budget"},
+        films_without_statements=6, top_without_statements=1,
+        films_without_statements_examples=[{"title_id": "tt0000009", "title": "Late", "gross": 5}],
+        top_without_director=[{"title_id": "tt0000005", "title": "No Director", "gross": 1_000_000}],
+        people_without_name=1, people_without_name_examples=["Q77"]))
+    code, out = run(capsys)
+    assert code == 0, out
+    assert "(incomplete)" in out
+    assert "6 films have no Wikidata statements fetched yet (1 of the top 1000; fetch time budget)" in out
+    assert "1 of the top 1000 films by gross have no director on Wikidata (P57), e.g. tt0000005 'No Director'" in out
+    assert "1 credited people have no English or mul label, e.g. Q77" in out

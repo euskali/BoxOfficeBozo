@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -15,9 +16,13 @@ import polars as pl
 from . import match, paths
 from .fetch import FetchDisabledError
 from .manual import validate_manual_dir
-from .sources import bom_weekend, stat695, wikidata
+from .sources import bom_weekend, credits, stat695, wikidata
 
 REQUIRE_DATA_FLAG = "BOFFO_REQUIRE_DATA"
+# Fetching stops this long after the build starts (the data-build job times out at 330 min).
+# The weekend charts have their own budget inside it; the credits step gets what's left.
+BUILD_MINUTES_FLAG = "BOFFO_BUILD_MINUTES"
+DEFAULT_BUILD_MINUTES = 300.0
 
 # Source steps: (name, milestone, callable or None if not implemented yet).
 # Each step writes its per-source tables to data/build/.
@@ -115,7 +120,15 @@ def write_manifest(tables: list | None = None) -> None:
     out.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
+def _build_minutes() -> float:
+    try:
+        return float(os.environ.get(BUILD_MINUTES_FLAG, DEFAULT_BUILD_MINUTES))
+    except ValueError:
+        return DEFAULT_BUILD_MINUTES
+
+
 def main(argv: list[str] | None = None) -> int:
+    started = time.monotonic()
     for d in (paths.data_raw(), paths.data_build(), paths.site_data()):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -144,6 +157,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"step {name}: skipped, its raw input is not cached in data/raw/ (data is fetched in CI)")
 
     tables = publish_tables()
+    # M4 runs on the matched titles, so after publishing them.
+    if any(t["name"] == "titles" for t in tables):
+        print("step credits: running")
+        try:
+            tables += [_table_entry(p) for p in credits.run(deadline=started + _build_minutes() * 60)]
+        except FetchDisabledError as exc:
+            if require:
+                print(f"step credits: FAILED, {REQUIRE_DATA_FLAG}=1 and {exc}", file=sys.stderr)
+                return 1
+            print("step credits: skipped, its raw input is not cached in data/raw/ (data is fetched in CI)")
     for t in tables:
         print(f"published {t['file']}: {t['rows']} rows")
     write_manifest(tables)
