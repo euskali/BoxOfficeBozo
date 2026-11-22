@@ -27,7 +27,8 @@ def test_build_creates_dirs_and_manifest(repo, capsys):
     assert "step stat695: skipped, its raw input is not cached" in out
     assert "step bom_weekend: skipped, its raw input is not cached" in out
     assert "step wikidata: skipped, its raw input is not cached" in out
-    assert "not implemented until M5" in out
+    assert "step cpi: skipped, its raw input is not cached" in out
+    assert "not implemented" not in out
 
 
 def test_build_fails_when_data_is_required(repo, monkeypatch, capsys):
@@ -64,6 +65,8 @@ def test_full_build_from_cached_rda(repo, monkeypatch, capsys):
     assert "published snapshots.parquet: 4 rows" in out
     # Credits (M4) run on matched titles; offline, none are matched, so there's nothing to build.
     assert "step credits: running" in out and "no titles are matched to Wikidata items" in out
+    # M5 needs the cpi step's table, which offline isn't there.
+    assert "step cume: skipped, data/build/cpi.parquet is missing" in out
 
     site = repo / "site/public/data"
     snaps = pl.read_parquet(site / "snapshots.parquet")

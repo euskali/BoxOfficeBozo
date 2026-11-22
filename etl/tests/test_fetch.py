@@ -338,3 +338,35 @@ def test_reduce_caches_only_what_is_kept(repo, fetch_on):
     meta = json.loads(path.with_name(path.name + ".meta.json").read_text())
     assert meta["reduced"] is True and meta["original_bytes"] == len(big) and meta["bytes"] == path.stat().st_size
     assert f.fetch(url, reduce=kept) == path and len(rec.requests) == 1  # cached: never fetched again
+
+
+def test_post_is_cached_by_body_and_fragment_tags_are_not_sent(repo, fetch_on):
+    """BLS's v1 API takes its years as a JSON POST; a #fragment tags the cache key only."""
+    f, rec, _ = make(lambda r: httpx.Response(200, content=b'{"ok": 1}', headers={"content-type": "application/json"}))
+    api = "https://api.bls.gov/publicAPI/v1/timeseries/data/"
+    a, b = b'{"startyear":"1913"}', b'{"startyear":"1923"}'
+    pa = f.fetch(api, post=a)
+    assert rec.requests[0].method == "POST" and rec.requests[0].content == a
+    assert rec.requests[0].headers["content-type"] == "application/json"
+    assert f.fetch(api, post=a) == pa and len(rec.requests) == 1  # cached by URL and body
+    assert f.is_cached(api, post=a) and not f.is_cached(api, post=b) and not f.is_cached(api)
+    pb = f.fetch(api, post=b)
+    pw = f.fetch(api + "#2026-W47", post=a)
+    assert len({pa, pb, pw}) == 3 and len(rec.requests) == 3
+    assert str(rec.requests[2].url) == api  # the fragment isn't sent
+    meta = json.loads(pw.with_name(pw.name + ".meta.json").read_text())
+    assert meta["url"] == api + "#2026-W47" and meta["method"] == "POST" and meta["post_body"] == a.decode()
+
+
+def test_post_is_never_redirected(repo, fetch_on):
+    f, rec, _ = make(lambda r: httpx.Response(302, headers={"Location": "https://api.bls.gov/elsewhere"}))
+    with pytest.raises(FetchError, match="redirected a POST"):
+        f.fetch("https://api.bls.gov/publicAPI/v1/timeseries/data/", post=b"{}")
+    assert len(rec.requests) == 1
+
+
+def test_post_is_offline_unless_fetching_is_on(repo):
+    f, rec, _ = make(ok)
+    with pytest.raises(FetchDisabledError):
+        f.fetch("https://api.bls.gov/publicAPI/v1/timeseries/data/", post=b"{}")
+    assert rec.requests == []

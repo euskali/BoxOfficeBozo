@@ -586,6 +586,183 @@ def check_credits() -> list[Issue]:
     return issues
 
 
+# --- M5: inflation and admissions ----------------------------------------------------
+
+CPI_REPORT = "cpi_report.json"
+CUME_REPORT = "cume_report.json"
+CPI_LAG_DAYS = 75  # BLS publishes a month's index in the middle of the next month
+
+
+def _report(name: str) -> dict | None:
+    path = paths.data_build() / name
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+def check_cpi_report() -> list[Issue]:
+    r = _report(CPI_REPORT)
+    if r is None:
+        return []
+    print(f"cpi: BLS {r['series']} ({r['base']}) {r['first_month']} to {r['latest_month']}, {r['months']} months, "
+          f"latest {r['latest_cpi']}; {len(r['fetched'])} of {r['windows']} ten-year windows fetched this run")
+    issues: list[Issue] = []
+    if r["stale_windows"]:
+        issues.append(Issue("warning", CPI_REPORT, 0, "CPI answers from an earlier week are used for "
+                            f"{', '.join(r['stale_windows'])} (this week's request: {r['fetch']['stopped']})"))
+    if r["latest_month"] and r.get("built_on"):
+        lag = date.fromisoformat(r["built_on"]) - date.fromisoformat(r["latest_month"])
+        if lag.days > CPI_LAG_DAYS:
+            issues.append(Issue("warning", CPI_REPORT, 0, f"the latest CPI month is {r['latest_month'][:7]}, "
+                                f"{lag.days} days before the build"))
+    return issues
+
+
+def check_cpi() -> list[Issue]:
+    path = _site_table("cpi")
+    if path is None:
+        return []
+    name = "cpi.parquet"
+    con = _connect()
+    _view(con, "c", path)
+    first, last, n, distinct, bad = con.execute(
+        "SELECT min(month), max(month), count(*), count(DISTINCT month), count(*) FILTER (cpi IS NULL OR cpi <= 0) "
+        "FROM c").fetchone()
+    con.close()
+    if n == 0:
+        return [Issue("error", name, 0, "the CPI table is empty")]
+    issues: list[Issue] = []
+    expected = (last.year - first.year) * 12 + last.month - first.month + 1
+    if first != date(1913, 1, 1):
+        issues.append(Issue("error", name, 0, f"CPI starts at {first}, not 1913-01"))
+    if distinct != n:
+        issues.append(Issue("error", name, 0, f"{n - distinct} months appear more than once"))
+    if distinct != expected:
+        issues.append(Issue("error", name, 0, f"{expected - distinct} months are missing between {first} and {last}"))
+    if bad:
+        issues.append(Issue("error", name, 0, f"{bad} months have no positive index"))
+    return issues
+
+
+def check_ticket_prices() -> list[Issue]:
+    path = _site_table("ticket_prices")
+    if path is None:
+        return []
+    name = "ticket_prices.parquet"
+    con = _connect()
+    _view(con, "t", path)
+    first, last, n, distinct, bad, mislabelled = con.execute(
+        """SELECT min(year), max(year), count(*), count(DISTINCT year),
+                  count(*) FILTER (avg_price IS NULL OR avg_price <= 0 OR is_interpolated IS NULL),
+                  count(*) FILTER (is_interpolated <> (source LIKE 'interpolated between %'
+                                                       OR source LIKE 'carried forward from %'))
+           FROM t""").fetchone()
+    con.close()
+    if n == 0:
+        return [Issue("warning", name, 0, "no ticket prices: data/manual/ticket_prices.csv has no rows, "
+                      "so there are no admissions")]
+    issues: list[Issue] = []
+    if distinct != n or distinct != last - first + 1:
+        issues.append(Issue("error", name, 0, f"years {first}-{last} aren't each there once ({n} rows)"))
+    if bad:
+        issues.append(Issue("error", name, 0, f"{bad} years have no positive price or no is_interpolated flag"))
+    if mislabelled:
+        issues.append(Issue("error", name, 0, f"{mislabelled} years' is_interpolated doesn't match their source"))
+    return issues
+
+
+def check_cume_report() -> list[Issue]:
+    r = _report(CUME_REPORT)
+    if r is None:
+        return []
+    years = r["ticket_years"] or ["-", "-"]
+    print(f"title_cume: {r['titles']} titles, {r['rows']} rows; CPI dollars in {r['cpi_base']} dollars through "
+          f"{(r['latest_cpi_month'] or '')[:7]}; ticket prices {years[0]}-{years[1]} "
+          f"({r['ticket_years_reported']} sourced years; {r['gross_share_at_estimated_price']:.1%} of gross priced at "
+          f"an interpolated or carried-forward price); {r['late_runs']} late runs and {r['carry_ins']} carry-ins "
+          f"(${r['covered']:,} already counted by the title's other releases, ${r['excess']:,} of earlier money "
+          f"added); {r['baselines']} baselines ({r['baselines_rental']} rentals); "
+          f"{r['negative_deltas']} weekly totals go down")
+    issues: list[Issue] = []
+    name = CUME_REPORT
+    if r["ticket_years_carried_forward"]:
+        y = r["ticket_years_carried_forward"]
+        issues.append(Issue("warning", name, 0, f"ticket prices for {y[0]}-{y[-1]} are carried forward from the last "
+                            "sourced year, so admissions for those years run high if prices rose"))
+    if r["ticket_years_interpolated"]:
+        y = r["ticket_years_interpolated"]
+        issues.append(Issue("warning", name, 0, f"{len(y)} years' ticket prices are interpolated between sourced "
+                            f"years (no figure found yet): {', '.join(map(str, y))}"))
+    if r["deltas_after_latest_cpi"]:
+        issues.append(Issue("warning", name, 0, f"{r['deltas_after_latest_cpi']} weekly changes "
+                            f"(${r['gross_after_latest_cpi']:,}) are after the latest CPI month "
+                            f"({(r['latest_cpi_month'] or '')[:7]}) and use its index until BLS publishes theirs"))
+    added = [o for o in r["overlaps"] if o["excess"]]
+    if added:
+        issues.append(Issue("warning", name, 0, f"{len(added)} late runs or carry-ins brought earlier money that no "
+                            "other release of the title holds (a film older than its first chart here with no "
+                            "pre-1982 baseline, or one whose weekly charts stopped early); it's dated to the run's "
+                            "opening, " + _examples(added, lambda o: f"{o['release_id']} {o['title']!r}: "
+                                                    f"${o['excess']:,} from {o['opened']}")))
+    if r["releases_without_totals"]:
+        issues.append(Issue("warning", name, 0, f"{r['releases_without_totals']} releases charted without a total "
+                            "gross on any weekend, so they add nothing to their titles' totals, "
+                            + _examples(r["releases_without_totals_examples"],
+                                        lambda x: f"{x['release_id']} {x['title']!r}")))
+    for key, what in (("titles_without_admissions", "admissions (a year with no ticket price)"),
+                      ("titles_without_cpi", "CPI dollars (a month with no CPI)")):
+        if r[key]:
+            issues.append(Issue("warning", name, 0, f"{r[key]} titles have no {what}, "
+                                + _examples([(t,) for t in r[key + "_examples"]], lambda x: x[0])))
+    return issues
+
+
+def check_title_cume() -> list[Issue]:
+    path = _site_table("title_cume")
+    if path is None:
+        return []
+    name = "title_cume.parquet"
+    issues: list[Issue] = []
+    con = _connect()
+    _view(con, "c", path)
+
+    def rows(sql: str) -> list[tuple]:
+        return con.execute(sql).fetchall()
+
+    dup = rows("SELECT title_id, as_of FROM c GROUP BY ALL HAVING count(*) > 1 ORDER BY 1, 2")
+    if dup:
+        issues.append(Issue("error", name, 0, f"{len(dup)} (title_id, as_of) pairs appear more than once, "
+                            + _examples(dup, lambda x: f"{x[0]} {x[1]}")))
+    titles, snaps = _site_table("titles"), _site_table("snapshots")
+    if titles is not None:
+        _view(con, "t", titles)
+        orphan = rows("SELECT DISTINCT title_id FROM c ANTI JOIN t USING (title_id) ORDER BY 1")
+        if orphan:
+            issues.append(Issue("error", name, 0, f"{len(orphan)} title_ids are not in titles, "
+                                + _examples(orphan, lambda x: x[0])))
+    if snaps is not None:
+        _view(con, "s", snaps)
+        missing = rows("""SELECT DISTINCT title_id FROM s WHERE total_gross IS NOT NULL
+                          AND title_id NOT IN (SELECT title_id FROM c) ORDER BY 1""")
+        if missing:
+            issues.append(Issue("error", name, 0, f"{len(missing)} charted titles have no rows, "
+                                + _examples(missing, lambda x: x[0])))
+        r = _report(CUME_REPORT)
+        if r is not None:
+            last_totals = rows("""SELECT coalesce(sum(t), 0) FROM (SELECT arg_max(total_gross, weekend_end) AS t
+                                  FROM s WHERE total_gross IS NOT NULL GROUP BY release_id)""")[0][0]
+            final = rows("""SELECT coalesce(sum(n), 0) FROM (SELECT arg_max(cume_nominal, as_of) AS n
+                            FROM c GROUP BY title_id)""")[0][0]
+            expected = last_totals + r["baseline_total"] - r["covered"]
+            if final != expected:
+                issues.append(Issue("error", name, 0, f"final totals add up to ${final:,}, not the releases' latest "
+                                    f"totals plus baselines less what late runs repeat (${expected:,})"))
+    neg = rows("SELECT title_id, as_of, cume_nominal FROM c WHERE cume_nominal < 0 ORDER BY 1, 2")
+    if neg:
+        issues.append(Issue("error", name, 0, f"{len(neg)} rows have a negative total, "
+                            + _examples(neg, lambda x: f"{x[0]} {x[1]} {x[2]:,}")))
+    con.close()
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Each check is a zero-argument callable returning a list of Issue. Checks must
 # flag anomalies, never silently fix them.
@@ -602,6 +779,11 @@ CHECKS: list[Callable[[], list[Issue]]] = [
     check_titles,
     check_credits_report,
     check_credits,
+    check_cpi_report,
+    check_cpi,
+    check_ticket_prices,
+    check_cume_report,
+    check_title_cume,
 ]
 
 

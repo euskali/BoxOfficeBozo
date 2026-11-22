@@ -22,7 +22,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urldefrag, urljoin, urlsplit
 
 import httpx
 
@@ -133,6 +133,11 @@ def _range_key(url: str, start: int, length: int) -> str:
     return f"{url}#bytes={start}-{start + length - 1}"
 
 
+def _post_key(url: str, body: bytes) -> str:
+    """Cache key of a POST: the URL (with any fragment tag) and the body."""
+    return f"{url} POST {body.decode('utf-8')}"
+
+
 class Fetcher:
     def __init__(
         self,
@@ -169,10 +174,10 @@ class Fetcher:
                 return p
         return None
 
-    def is_cached(self, url: str, *, byte_range: tuple[int, int] | None = None) -> bool:
-        """True if ``url`` (or that byte range of it) is already in data/raw/."""
+    def is_cached(self, url: str, *, byte_range: tuple[int, int] | None = None, post: bytes | None = None) -> bool:
+        """True if ``url`` (or that byte range of it, or that POST to it) is already in data/raw/."""
         check_url_policy(url)
-        key = _range_key(url, *byte_range) if byte_range else url
+        key = _range_key(url, *byte_range) if byte_range else _post_key(url, post) if post is not None else url
         return self._find_cached(key) is not None
 
     # -- politeness ------------------------------------------------------
@@ -191,19 +196,24 @@ class Fetcher:
             return self._client, False
         return httpx.Client(timeout=60.0, headers={"User-Agent": USER_AGENT}), True
 
-    def _request_once(self, client: httpx.Client, url: str, headers: dict[str, str]) -> httpx.Response:
+    def _request_once(self, client: httpx.Client, url: str, headers: dict[str, str],
+                      post: bytes | None = None) -> httpx.Response:
         host = check_url_policy(url)
         self._wait_turn(host)
         self.network_requests += 1
-        request = client.build_request("GET", url, headers={"User-Agent": USER_AGENT, **headers})
+        # A fragment only tags the cache key; it's never sent.
+        target = urldefrag(url).url
+        request = client.build_request("GET" if post is None else "POST", target, content=post,
+                                       headers={"User-Agent": USER_AGENT, **headers})
         # Streamed, so a server that ignores a Range header can't make us read a whole file.
         return client.send(request, follow_redirects=False, stream=True)
 
-    def _request_with_retries(self, client: httpx.Client, url: str, headers: dict[str, str]) -> httpx.Response:
+    def _request_with_retries(self, client: httpx.Client, url: str, headers: dict[str, str],
+                              post: bytes | None = None) -> httpx.Response:
         last_exc: Exception | None = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
-                resp = self._request_once(client, url, headers)
+                resp = self._request_once(client, url, headers, post)
             except httpx.TransportError as exc:  # includes timeouts
                 last_exc = exc
                 if attempt == MAX_ATTEMPTS:
@@ -242,15 +252,18 @@ class Fetcher:
         return b"".join(chunks)
 
     def _download(
-        self, url: str, *, headers: dict[str, str], accept: tuple[int, ...], limit: int
+        self, url: str, *, headers: dict[str, str], accept: tuple[int, ...], limit: int,
+        post: bytes | None = None,
     ) -> tuple[httpx.Response, bytes, str]:
         client, owned = self._get_client()
         try:
             current = url
             for _ in range(MAX_REDIRECTS + 1):
-                resp = self._request_with_retries(client, current, headers)
+                resp = self._request_with_retries(client, current, headers, post)
                 if resp.is_redirect:
                     resp.close()
+                    if post is not None:  # never re-send a POST somewhere else
+                        raise FetchError(f"{current} redirected a POST")
                     location = resp.headers.get("Location")
                     if not location:
                         raise FetchError(f"{current} redirected without a Location header")
@@ -307,6 +320,8 @@ class Fetcher:
         accept_status: tuple[int, ...] = (200,),
         validate: Callable[[bytes], None] | None = None,
         reduce: Callable[[bytes], bytes] | None = None,
+        post: bytes | None = None,
+        content_type: str = "application/json",
     ) -> Path:
         """Return the cached body of ``url``, downloading it first if needed (CI only).
 
@@ -317,24 +332,32 @@ class Fetcher:
         what gets cached (the meta file records the original's size and hash):
         for answers far bigger than what's used, like Wikidata's every claim of
         a film when only its credits are read.
+
+        ``post`` sends that body as a POST instead of a GET (an API that takes
+        its query as JSON, like BLS's). The body is part of the cache key, and
+        so is a ``#fragment`` on the URL, which is never sent: a tag such as
+        the week asks the same question again on a schedule.
         """
         check_url_policy(url)  # policy first, even for cached URLs
-        cached = self._find_cached(url)
+        key = url if post is None else _post_key(url, post)
+        cached = self._find_cached(key)
         if cached is not None:
             return cached
-        self._require_network(url)
-        resp, body, final_url = self._download(url, headers={}, accept=accept_status, limit=MAX_BODY_BYTES)
+        self._require_network(key)
+        headers = {} if post is None else {"Content-Type": content_type}
+        resp, body, final_url = self._download(url, headers=headers, accept=accept_status, limit=MAX_BODY_BYTES,
+                                               post=post)
         if validate is not None:
             try:
                 validate(body)
             except Exception as exc:  # an outage page served as 200, say: don't cache it
                 raise FetchError(f"{url} returned an unusable body: {exc}") from exc
-        extra: dict = {}
+        extra: dict = {} if post is None else {"method": "POST", "post_body": post.decode("utf-8")}
         if reduce is not None:
-            extra = {"reduced": True, "original_bytes": len(body),
-                     "original_sha256": hashlib.sha256(body).hexdigest()}
+            extra |= {"reduced": True, "original_bytes": len(body),
+                      "original_sha256": hashlib.sha256(body).hexdigest()}
             body = reduce(body)
-        return self._store(url, url, resp, body, final_url, suffix, extra)
+        return self._store(key, url, resp, body, final_url, suffix, extra)
 
     def fetch_range(self, url: str, start: int, length: int, *, suffix: str | None = ".bin") -> Path:
         """Fetch ``length`` bytes of ``url`` from ``start`` (one WARC record, say), cached by range."""

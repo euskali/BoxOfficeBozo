@@ -129,8 +129,9 @@ export default function Layout() {
         </p>
         <p className="m-0 mb-1">
           Data: Purdue STAT 695 dataset (Box Office Mojo weekend charts) · Internet Archive Wayback
-          Machine · Common Crawl · Wikidata (CC0) · BLS CPI. Not affiliated with IMDb, Box
-          Office Mojo, or The Numbers.
+          Machine · Common Crawl · Wikidata (CC0) · BLS CPI · NATO (now Cinema United) and
+          Cinema Foundation average ticket prices. Not affiliated with IMDb, Box Office Mojo, or
+          The Numbers.
         </p>
         <p className="m-0">
           <a href={NOTICE_URL}>Data Notice</a> | <a href={REPO_URL}>GitHub repo</a>

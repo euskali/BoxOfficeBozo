@@ -398,3 +398,81 @@ def test_credit_coverage_warnings(repo, capsys):
     assert "6 films have no Wikidata statements fetched yet (1 of the top 1000; fetch time budget)" in out
     assert "1 of the top 1000 films by gross have no director on Wikidata (P57), e.g. tt0000005 'No Director'" in out
     assert "1 credited people have no English or mul label, e.g. Q77" in out
+
+
+# --- M5 ---------------------------------------------------------------------------
+
+def write_m5(repo, *, cpi_rows=None, tickets=None, cume_rows=None, report=None, cpi_report=None) -> None:
+    """The M5 tables and reports for CLEAN, built by cume.build unless given."""
+    from boffo_etl import cume
+
+    write_tables(repo, CLEAN)
+    write_titles(repo, [{"title_id": "bb_a"}, {"title_id": "bb_b"}])
+    site, build_dir = repo / "site/public/data", repo / "data/build"
+    build_dir.mkdir(parents=True, exist_ok=True)
+    months = [date(1913 + i // 12, i % 12 + 1, 1) for i in range((1990 - 1913) * 12 + 2)]
+    cpi = pl.DataFrame({"month": months, "cpi": [100.0] * len(months)}, schema=cume.cpi_source.SCHEMA)
+    b = cume.build(pl.read_parquet(site / "snapshots.parquet"), pl.read_parquet(site / "releases.parquet"),
+                   pl.read_parquet(site / "titles.parquet"), cpi,
+                   [{"year": 1989, "avg_price_usd": 4.0, "source": "NATO table", "source_url": ""}])
+    (pl.DataFrame(cpi_rows, schema=cume.cpi_source.SCHEMA, orient="row") if cpi_rows is not None else b.cpi) \
+        .write_parquet(site / "cpi.parquet")
+    (pl.DataFrame(tickets, schema=cume.TICKET_SCHEMA, orient="row") if tickets is not None else b.tickets) \
+        .write_parquet(site / "ticket_prices.parquet")
+    (pl.DataFrame(cume_rows, schema=cume.CUME_SCHEMA, orient="row") if cume_rows is not None else b.cume) \
+        .write_parquet(site / "title_cume.parquet")
+    (build_dir / "cume_report.json").write_text(json.dumps(b.report | (report or {}), default=str))
+    cr = {"series": "CUUR0000SA0", "base": "1982-84=100", "built_on": "1990-03-20", "months": len(months),
+          "first_month": "1913-01-01", "latest_month": "1990-02-01", "latest_cpi": 100.0, "windows": 8,
+          "fetched": [], "fetch": {"stopped": None}, "stale_windows": [], "pruned_cache_entries": 0,
+          "network_requests": 0}
+    (build_dir / "cpi_report.json").write_text(json.dumps(cr | (cpi_report or {})))
+
+
+def test_clean_m5_tables_pass(repo, capsys):
+    write_m5(repo)
+    code, out = run(capsys)
+    assert code == 0, out
+    assert "cpi: BLS CUUR0000SA0 (1982-84=100) 1913-01-01 to 1990-02-01" in out
+    assert "title_cume: 2 titles, 4 rows" in out
+    assert "carried forward" in out  # 1990 uses 1989's price
+
+
+def test_m5_table_errors(repo, capsys):
+    write_m5(repo, cpi_rows=[(date(1913, 1, 1), 9.8), (date(1913, 3, 1), 0.0), (date(1913, 3, 1), 9.9)],
+             tickets=[(1989, 4.0, "NATO table", False), (1990, 4.0, "NATO table", True), (1992, 4.1, "x", False)],
+             cume_rows=[("bb_a", SUN, 100, 100.0, 25.0, False), ("bb_a", SUN, 100, 100.0, 25.0, False),
+                        ("bb_x", SUN, -5, -5.0, -1.0, False)])
+    code, out = run(capsys)
+    assert code == 1
+    for message in ("1 months appear more than once", "1 months are missing between 1913-01-01 and 1913-03-01",
+                    "1 months have no positive index", "years 1989-1992 aren't each there once (3 rows)",
+                    "1 years' is_interpolated doesn't match their source",
+                    "1 (title_id, as_of) pairs appear more than once, e.g. bb_a 1990-01-07",
+                    "1 title_ids are not in titles, e.g. bb_x", "1 charted titles have no rows, e.g. bb_b",
+                    "final totals add up to $95, not the releases' latest totals plus baselines less what late "
+                    "runs repeat ($280)", "1 rows have a negative total, e.g. bb_x 1990-01-07 -5"):
+        assert message in out, message
+
+
+def test_m5_report_warnings(repo, capsys):
+    write_m5(repo, report={"ticket_years_interpolated": [2020, 2021], "deltas_after_latest_cpi": 2,
+                           "gross_after_latest_cpi": 1500, "titles_without_admissions": 1,
+                           "titles_without_admissions_examples": ["tt0031381"], "releases_without_totals": 1,
+                           "releases_without_totals_examples": [{"release_id": "legacy:venom", "title": "Venom"}],
+                           "overlaps": [{"release_id": "bom:rl1", "title": "Jaws", "kind": "late_run",
+                                         "opened": "1975-06-22", "excess": 254, "covered": 0}]},
+             cpi_report={"stale_windows": ["1983-1992 (1990-W10)"], "fetch": {"stopped": "fetching disabled"},
+                         "built_on": "1990-06-30"})
+    code, out = run(capsys)
+    assert code == 0, out
+    for message in ("CPI answers from an earlier week are used for 1983-1992 (1990-W10) (this week's request: "
+                    "fetching disabled)", "the latest CPI month is 1990-02, 149 days before the build",
+                    "ticket prices for 1990-1990 are carried forward",
+                    "2 years' ticket prices are interpolated between sourced years (no figure found yet): 2020, 2021",
+                    "2 weekly changes ($1,500) are after the latest CPI month (1990-02)",
+                    "1 late runs or carry-ins brought earlier money", "bom:rl1 'Jaws': $254 from 1975-06-22",
+                    "1 titles have no admissions (a year with no ticket price), e.g. tt0031381",
+                    "1 releases charted without a total gross on any weekend, so they add nothing to their "
+                    "titles' totals, e.g. legacy:venom 'Venom'"):
+        assert message in out, message
