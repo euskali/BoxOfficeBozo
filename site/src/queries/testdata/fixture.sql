@@ -13,14 +13,20 @@
 --   1995-06-04  delta 1000                     [delta 1, bravo 2, alpha 3, charlie 3, echo 5, foxtrot 6]
 -- foxtrot's second row has no CPI dollars or admissions (unpriceable), so from 1993-01-10 it has
 -- no value in those measures: the leaderboard leaves it out and its timeline rank is NULL.
-CREATE TABLE titles (title_id VARCHAR, title VARCHAR, year INTEGER, baseline_is_rental BOOLEAN);
+-- golf ("The Golf Picture") and hotel ("9 Hotel Nights") never charted: they have titles rows
+-- only, for browsing (G and #) and search.
+CREATE TABLE titles (title_id VARCHAR, wikidata_qid VARCHAR, title VARCHAR, year INTEGER,
+                     release_date DATE, distributor VARCHAR, genres VARCHAR, mpaa VARCHAR,
+                     pre1982_baseline_gross DOUBLE, baseline_is_rental BOOLEAN, baseline_source VARCHAR);
 INSERT INTO titles VALUES
-    ('test_alpha', 'Test Film Alpha', 1990, NULL),
-    ('test_bravo', 'Test Film Bravo', 1991, NULL),
-    ('test_charlie', 'Test Film Charlie', 1991, NULL),
-    ('test_delta', 'Test Film Delta', 1995, NULL),
-    ('test_echo', 'Test Film Echo', 1975, true),
-    ('test_foxtrot', 'Test Film Foxtrot', 1993, NULL);
+    ('test_alpha', NULL, 'Test Film Alpha', 1990, DATE '1990-01-05', 'Fictional Pictures', 'Comedy', 'PG', NULL, NULL, NULL),
+    ('test_bravo', NULL, 'Test Film Bravo', 1991, DATE '1991-01-04', 'Imaginary Films', 'Drama', 'R', NULL, NULL, NULL),
+    ('test_charlie', NULL, 'Test Film Charlie', 1991, DATE '1991-01-04', 'Fictional Pictures', NULL, NULL, NULL, NULL, NULL),
+    ('test_delta', NULL, 'Test Film Delta', 1995, DATE '1995-06-02', 'Imaginary Films', NULL, NULL, NULL, NULL, NULL),
+    ('test_echo', NULL, 'Test Film Echo', 1975, NULL, NULL, NULL, NULL, 250, true, 'A fictional citation'),
+    ('test_foxtrot', NULL, 'Test Film Foxtrot', 1993, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+    ('test_golf', NULL, 'The Golf Picture', 1996, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+    ('test_hotel', NULL, '9 Hotel Nights', 1997, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
 CREATE TABLE title_cume (title_id VARCHAR, as_of DATE, cume_nominal BIGINT, cume_cpi DOUBLE,
                          cume_admissions DOUBLE, baseline BOOLEAN);
@@ -61,13 +67,18 @@ INSERT INTO credits VALUES
     ('test_echo', 'P3', 'director', NULL, NULL),
     ('test_echo', 'P12', 'actor', 1, 'statement_order');
 
-CREATE TABLE releases (release_id VARCHAR, title_id VARCHAR, title VARCHAR, label VARCHAR,
-                       distributor VARCHAR);
+CREATE TABLE releases (release_id VARCHAR, title_id VARCHAR, label VARCHAR, release_date DATE,
+                       title VARCHAR, distributor VARCHAR, first_weekend DATE, last_weekend DATE,
+                       weekends INTEGER, is_rerelease BOOLEAN, source VARCHAR);
 INSERT INTO releases VALUES
-    ('rel_alpha', 'test_alpha', 'Test Film Alpha', NULL, 'Fictional Pictures'),
-    ('rel_bravo', 'test_bravo', 'Test Film Bravo', NULL, 'Imaginary Films'),
-    ('rel_charlie', 'test_charlie', 'Test Film Charlie', NULL, 'Fictional Pictures'),
-    ('rel_delta', 'test_delta', 'Test Film Delta (Special Edition)', 'Special Edition', 'Imaginary Films');
+    ('rel_alpha', 'test_alpha', NULL, DATE '1990-01-05', 'Test Film Alpha', 'Fictional Pictures',
+     DATE '1990-01-07', DATE '1990-01-14', 2, false, 'stat695'),
+    ('rel_bravo', 'test_bravo', NULL, DATE '1991-01-04', 'Test Film Bravo', 'Imaginary Films',
+     DATE '1991-01-06', DATE '1991-01-13', 2, false, 'stat695'),
+    ('rel_charlie', 'test_charlie', NULL, DATE '1991-01-04', 'Test Film Charlie', 'Fictional Pictures',
+     DATE '1991-01-06', DATE '1991-01-13', 2, false, 'stat695'),
+    ('rel_delta', 'test_delta', 'Special Edition', DATE '1995-06-02', 'Test Film Delta (Special Edition)',
+     'Imaginary Films', DATE '1995-06-04', DATE '1995-06-04', 1, true, 'bom_weekend');
 
 CREATE TABLE snapshots (weekend_end DATE, release_id VARCHAR, title_id VARCHAR, rank INTEGER,
                         weekend_gross BIGINT, theaters INTEGER, total_gross BIGINT, weeks INTEGER,

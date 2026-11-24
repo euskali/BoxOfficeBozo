@@ -25,6 +25,13 @@ Looks like 1999. Works like 2026.
 - [ ] M7 Site
 - [ ] M8 Data notes & launch
 
+## Working on the site
+The data is built only in CI, so a fresh clone has none. Fill `site/public/data/` (gitignored) with either:
+- `make pull-data`: the real tables the live site publishes (checksums verified), or
+- `make sample-data`: fictional films with made-up numbers (the site shows a SAMPLE DATA banner).
+
+Then `make site-dev`. On Windows without `make`, run `uv --directory etl run python -m boffo_etl.pull_data` and `cd site && npm run dev`.
+
 ## Credits
 Data from the Purdue STAT 695 dataset (Box Office Mojo weekend charts, 1982–2016), archived Box Office Mojo pages via the Internet Archive Wayback Machine and Common Crawl, Wikidata (CC0), and the U.S. Bureau of Labor Statistics. Non-commercial. Not affiliated with IMDb, Box Office Mojo, or The Numbers. See [DATA_NOTICE.md](DATA_NOTICE.md).
 

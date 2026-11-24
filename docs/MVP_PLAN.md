@@ -32,7 +32,9 @@ etl/                      Python 3.12 uv project
       cpi.py              CPI-U monthly, BLS series CUUR0000SA0 (public domain), from the BLS Public Data API v1
     match.py              release → title matching via Wikidata + overrides; builds titles.parquet
     cume.py               M5: each period's gross in CPI dollars and admissions; builds title_cume.parquet
-    queries.py            M6: runs the site's ranking SQL (site/src/queries) from Python, for tests
+    queries.py            M6: runs the site's SQL (site/src/queries) from Python, for tests
+    sample.py             M7: `make sample-data`, fictional tables for local site work (marked sample)
+    pull_data.py          M7: `make pull-data`, copies the live site's published tables (checksums verified)
     build.py              orchestrates; writes data/build/*.parquet and site/public/data/*.parquet
     checks.py             data-quality checks (also run in CI)
   tests/                  pytest (offline; synthetic fixtures only)
@@ -41,9 +43,15 @@ data/
   raw/                    gitignored downloads; persisted between CI runs with actions/cache
   build/                  gitignored intermediate outputs
 site/                     Vite + React + TypeScript + Tailwind v4 + DuckDB-WASM (Vitest tests in src/)
-  src/queries/            ranking SQL shared by the browser and pytest: leaderboard, film_rank_timeline,
-                          person_totals (and person_rank), weekend_chart, cpi_factor; engine.json pins DuckDB
+  src/queries/            SQL shared by the browser and pytest: the M6 ranking queries (leaderboard,
+                          film_rank_timeline, person_totals, weekend_chart, cpi_factor) and M7's page
+                          queries (film*, person, filmography, browse_films, search_index, search,
+                          latest_date); engine.json pins DuckDB and its Parquet extension
+  src/db/                 store.ts loads the engine and tables on demand; useQuery.ts runs a query
+  src/pages/              Home, Films, Film, Leaderboard, People, Person, Weekend, Search, About
+  scripts/                duckdb-extensions.mjs (self-hosted Parquet extension), spa-fallback.mjs
   public/data/            gitignored; final Parquet built in CI, shipped only in the Pages artifact
+  public/duckdb-extensions/  gitignored; DuckDB's Parquet extension, downloaded at build time (pinned SHA-256)
 scripts/check-no-data.sh  `make guard`: fails if data files are tracked by git
 .github/workflows/        ci.yml (PRs) · deploy.yml (push to main: data-build → deploy)
 DATA_NOTICE.md            source terms, not-affiliated disclaimer, takedown contact
@@ -228,6 +236,15 @@ Credits and titles come from **Wikidata (CC0)**, not the IMDb datasets. IMDb's n
 - Accessibility: WCAG AA contrast, real tables with `<th scope>`, focus styles, `prefers-reduced-motion`.
 - Local development data: the ETL can't fetch locally, so add `make sample-data`. It writes a small synthetic dataset (obviously fictional titles, never deployed) into `site/public/data/`. Optionally add `make pull-data` to copy the Parquet already published on the deployed site.
 - **Accept:** Lighthouse scores ≥ 90 for Performance and Accessibility. All six key screens work on mobile and desktop.
+- *Learned (Nov 2026):*
+  - Routes: `/` · `/films?letter=T` · `/film/<title_id>` · `/leaderboard` · `/people?role=actor` · `/person/<qid>` · `/weekend` · `/search?q=` · `/about`. Ranking pages share `?date=YYYY-MM-DD` (absent: the latest weekend; the form snaps to the Sunday before), `&m=cpi|admissions` (absent: nominal) and `&cpi=then` (CPI dollars of the chosen date; absent: today's, the latest CPI month). The leaderboard adds `&from=&to=` (release years), `&page=` and `&hl=<title_id>`.
+  - Each page renders its heading and intro paragraph straight away; `src/db/store.ts` loads the engine and only the tables a query lists (`Query.tables` in `src/queries/index.ts`), shows the "Loading… please wait" progress box meanwhile, and keeps them in memory for the next page. Downloads start only after the first contentful paint: started earlier, Lighthouse's simulated LCP counted the 8 MB engine and the tables against the welcome text (LCP 31 s, Performance 74). Started after, Performance is 99.
+  - DuckDB-WASM loads `read_parquet` as an extension at runtime, and by default from extensions.duckdb.org, so every visitor's browser called a third party (M6's timings included it). The site now serves the official builds itself: `scripts/duckdb-extensions.mjs` downloads them at build time and checks the SHA-256s pinned in `engine.json`, and `src/db/duckdb.ts` sets `custom_extension_repository` to the site.
+  - New shared SQL for the pages: `film`, `film_credits`, `film_releases`, `film_weekends`, `person`, `filmography`, `browse_films`, `latest_date`, `search_index` and `search`. `leaderboard` takes a `compare_to` date for "rank change vs 1 year earlier", and `weekend_chart` gives last week's gross and the charts either side. Both suites test them on the fixture, and the page tests (`App.test.tsx`) render the real pages on it through DuckDB-WASM's Node build.
+  - Search normalises names (case, accents, punctuation) into a `search_index` table built once in the browser: doing it on every keystroke took about 150 ms in Python duckdb, against about 30 ms with the index.
+  - About 18% of stat695 rows have no theater count (Titanic's first run among them); the tables show a dash.
+  - `make sample-data` writes 262 fictional films ("Sample: …") with the real schemas and `"sample": true` in the manifest: the site shows a banner, the data tests skip, and `make check` fails. `make pull-data` copies the live site's tables, checked against its manifest's SHA-256s.
+  - Lighthouse on a local production build (`vite preview`; default mobile throttling and the desktop preset) for Home, Film, Leaderboard, Person, Weekend and About: Performance 98–100 and Accessibility 100 in all twelve runs. Getting there took fixed-height placeholders for the controls and loading boxes (CLS had been 0.45 on the desktop Film page) and 24 px touch targets. On a 375 px phone no page scrolls sideways; wide tables scroll inside their own box.
 
 ### M8 — Data notes and launch
 - About page in monospace FAQ style: sources and licenses (mirroring `DATA_NOTICE.md`), what "domestic" means (US + Canada), estimates vs actuals, the baseline approach, CPI vs admissions, re-release grouping, known gaps, and how to request a takedown or correction.

@@ -785,8 +785,20 @@ def check_title_cume() -> list[Issue]:
 # Each check is a zero-argument callable returning a list of Issue. Checks must
 # flag anomalies, never silently fix them.
 # ---------------------------------------------------------------------------
+def check_sample_data() -> list[Issue]:
+    """site/public/data must not hold `make sample-data` output (fictional films, made-up numbers)."""
+    from .sample import is_sample_data
+
+    if not is_sample_data():
+        return []
+    return [Issue("error", "site/public/data/manifest.json", 0,
+                  "site/public/data holds sample data (make sample-data): fictional films and made-up numbers; "
+                  "run make etl or make pull-data for real data")]
+
+
 CHECKS: list[Callable[[], list[Issue]]] = [
     check_manual,
+    check_sample_data,
     check_built_tables,
     check_stat695_report,
     check_bom_weekend_report,

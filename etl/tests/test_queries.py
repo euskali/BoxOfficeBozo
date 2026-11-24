@@ -1,4 +1,4 @@
-"""M6: the site's ranking SQL (site/src/queries/*.sql), executed here with duckdb on the shared
+"""M6/M7: the site's SQL (site/src/queries/*.sql), executed here with duckdb on the shared
 synthetic fixture (site/src/queries/testdata/fixture.sql). queries.test.ts runs the same files on
 the same fixture in DuckDB-WASM. Expected values are worked out by hand in the fixture's header."""
 
@@ -14,7 +14,9 @@ from boffo_etl import queries
 from conftest import REAL_REPO_ROOT
 
 QUERIES = REAL_REPO_ROOT / "site" / "src" / "queries"
-NAMES = ("leaderboard", "film_rank_timeline", "person_totals", "weekend_chart", "cpi_factor")
+NAMES = ("leaderboard", "film_rank_timeline", "person_totals", "weekend_chart", "cpi_factor",
+         "latest_date", "film", "film_credits", "film_releases", "film_weekends", "person",
+         "filmography", "browse_films", "search_index", "search")
 ALL = ("test_alpha", "test_bravo", "test_charlie", "test_delta", "test_echo", "test_foxtrot")
 
 
@@ -85,6 +87,19 @@ def test_leaderboard_filters_keep_all_time_ranks(con):
         "test_alpha", "test_echo"]
     one = queries.leaderboard(con, "1991-01-13", "nominal", title_id="test_charlie")
     assert [(r["rank"], r["all_time_rank"], r["matching"]) for r in one] == [(1, 2, 1)]
+
+
+def test_leaderboard_compares_with_an_earlier_date(con):
+    rows = queries.leaderboard(con, "1995-06-04", "nominal", compare_to="1991-01-13")
+    assert [(r["title_id"], r["rank"], r["prev_rank"]) for r in rows] == [
+        ("test_delta", 1, None), ("test_bravo", 2, 1), ("test_alpha", 3, 2), ("test_charlie", 3, 2),
+        ("test_echo", 5, 4), ("test_foxtrot", 6, None)]
+    # prev_rank ranks within the year filters, as rank does
+    rows = queries.leaderboard(con, "1995-06-04", "nominal", from_year=1991, compare_to="1991-01-13")
+    assert [(r["title_id"], r["rank"], r["prev_rank"]) for r in rows] == [
+        ("test_delta", 1, None), ("test_bravo", 2, 1), ("test_charlie", 3, 2), ("test_foxtrot", 4, None)]
+    assert {r["prev_rank"] for r in queries.leaderboard(con, "1995-06-04", "nominal")} == {None}
+    assert queries.latest_date(con) == date(1995, 6, 4)
 
 
 def test_leaderboard_pages(con):
@@ -171,9 +186,118 @@ def test_weekend_chart_snaps_back_and_shows_last_weeks_rank(con):
     assert queries.weekend_chart(con, "1989-12-31") == []
 
 
+def test_weekend_chart_gives_last_weeks_gross_and_the_charts_either_side(con):
+    rows = queries.weekend_chart(con, "1991-01-16")
+    assert [(r["title_id"], r["weekend_gross"], r["last_weekend_gross"]) for r in rows] == [
+        ("test_charlie", 250, 50), ("test_bravo", 200, 200)]
+    assert {(r["prev_weekend_end"], r["next_weekend_end"]) for r in rows} == {(date(1991, 1, 6), date(1995, 6, 4))}
+    delta = queries.weekend_chart(con, "1995-06-04")[0]  # the previous chart is years earlier
+    assert (delta["last_rank"], delta["last_weekend_gross"], delta["prev_weekend_end"], delta["next_weekend_end"]) == (
+        None, None, date(1991, 1, 13), None)
+    assert queries.weekend_chart(con, "1990-01-07")[0]["prev_weekend_end"] is None
+
+
 def test_cpi_factor_converts_1982_84_dollars(con):
     assert queries.cpi_factor(con, "1991-03-10") == {"month": date(1991, 1, 1), "factor": pytest.approx(1.346),
                                                      "is_interpolated": False}
     later = queries.cpi_factor(con, "2000-01-01")
     assert (later["month"], later["is_interpolated"]) == (date(1995, 6, 1), True)
     assert queries.cpi_factor(con, "1980-01-01") is None
+
+
+# --- M7: film, person, browse and search pages ------------------------------------------------
+
+def test_film_gives_the_titles_row_and_latest_totals(con):
+    alpha = queries.film(con, "test_alpha")
+    keys = ("title", "year", "release_date", "distributor", "genres", "mpaa", "first_as_of", "last_as_of",
+            "cume_nominal", "cume_cpi", "cume_admissions", "baseline", "releases", "weekends",
+            "first_weekend", "last_weekend")
+    assert {k: alpha[k] for k in keys} == {
+        "title": "Test Film Alpha", "year": 1990, "release_date": date(1990, 1, 5),
+        "distributor": "Fictional Pictures", "genres": "Comedy", "mpaa": "PG",
+        "first_as_of": date(1990, 1, 7), "last_as_of": date(1990, 1, 14), "cume_nominal": 300,
+        "cume_cpi": 450, "cume_admissions": 150, "baseline": False, "releases": 1, "weekends": 2,
+        "first_weekend": date(1990, 1, 7), "last_weekend": date(1990, 1, 14)}
+    foxtrot = queries.film(con, "test_foxtrot")  # its latest row is unpriced: no CPI or admissions
+    assert (foxtrot["cume_nominal"], foxtrot["cume_cpi"], foxtrot["cume_admissions"], foxtrot["releases"]) == (
+        120, None, None, None)
+    echo = queries.film(con, "test_echo")
+    assert (echo["baseline"], echo["baseline_is_rental"], echo["pre1982_baseline_gross"]) == (True, True, 250)
+    golf = queries.film(con, "test_golf")  # never charted
+    assert (golf["title"], golf["cume_nominal"], golf["first_as_of"]) == ("The Golf Picture", None, None)
+    assert queries.film(con, "no_such_title") is None
+
+
+def test_film_credits_list_directors_then_cast_in_billing_order(con):
+    assert [(r["role"], r["billing"], r["person_id"], r["name"]) for r in queries.film_credits(con, "test_delta")] == [
+        ("director", None, "P1", "Test Director One"), ("director", None, "P2", "Test Director Two"),
+        ("actor", 4, "P10", "Test Actor Ten")]
+    assert [(r["role"], r["billing"], r["person_id"]) for r in queries.film_credits(con, "test_charlie")] == [
+        ("director", None, "P1"), ("actor", 3, "P12"), ("actor", None, "P13")]
+
+
+def test_film_releases_and_weekends(con):
+    assert [(r["release_id"], r["label"], r["weekends"], r["is_rerelease"], r["total_gross"])
+            for r in queries.film_releases(con, "test_delta")] == [("rel_delta", "Special Edition", 1, True, 1000)]
+    assert [(r["weekend_end"], r["rank"], r["weekend_gross"], r["last_weekend_gross"], r["total_gross"])
+            for r in queries.film_weekends(con, "test_bravo")] == [
+        (date(1991, 1, 6), 1, 200, None, 200), (date(1991, 1, 13), 2, 200, 200, 400)]
+    delta = queries.film_weekends(con, "test_delta")
+    assert [(r["label"], r["is_estimate"], r["source"]) for r in delta] == [("Special Edition", True, "wayback")]
+    assert queries.film_weekends(con, "test_echo") == []
+
+
+def test_person_counts_credits_by_role(con):
+    assert queries.person(con, "P1") == {"person_id": "P1", "name": "Test Director One", "imdb_id": None,
+                                         "directed": 3, "acted": 0}
+    p10 = queries.person(con, "P10")
+    assert (p10["directed"], p10["acted"]) == (0, 3)
+    assert queries.person(con, "P99") is None
+
+
+def test_filmography_values_each_film_on_the_date(con):
+    rows = queries.filmography(con, "P10", "1995-06-04", "nominal")
+    assert [(r["title_id"], r["role"], r["billing"], r["counted"], r["value"], r["all_time_rank"]) for r in rows] == [
+        ("test_alpha", "actor", 1, True, 300, 3), ("test_bravo", "actor", 5, False, 400, 2),
+        ("test_delta", "actor", 4, True, 1000, 1)]
+    early = queries.filmography(con, "P10", "1990-12-31", "nominal")
+    assert [(r["title_id"], r["value"], r["all_time_rank"]) for r in early] == [
+        ("test_alpha", 300, 1), ("test_bravo", None, None), ("test_delta", None, None)]
+    cpi = queries.filmography(con, "P12", "1995-06-04", "cpi")
+    assert [(r["title_id"], r["counted"], r["value"], r["all_time_rank"], r["baseline"], r["baseline_is_rental"])
+            for r in cpi] == [("test_echo", True, 600, 2, True, True), ("test_charlie", True, 270, 5, False, None)]
+    # counted follows person_totals: P10's counted films sum to its career total
+    total = queries.person_rank(con, "P10", "1995-06-04", "actor", "nominal")["value"]
+    assert sum(r["value"] for r in rows if r["counted"]) == total
+
+
+def test_browse_files_films_by_first_letter_past_a_leading_article(con):
+    rows = queries.browse_films(con, "T")
+    assert [(r["title_id"], r["gross"]) for r in rows] == [
+        ("test_alpha", 300), ("test_bravo", 400), ("test_charlie", 300), ("test_delta", 1000),
+        ("test_echo", 250), ("test_foxtrot", 120)]
+    assert {r["matching"] for r in rows} == {6}
+    assert [r["title_id"] for r in queries.browse_films(con, "T", limit=2, offset=1)] == ["test_bravo", "test_charlie"]
+    assert [(r["title"], r["gross"]) for r in queries.browse_films(con, "g")] == [("The Golf Picture", None)]
+    assert [r["title_id"] for r in queries.browse_films(con, "#")] == ["test_hotel"]
+    assert queries.browse_films(con, "Z") == []
+
+
+def test_search_finds_films_and_people_by_word_start(con):
+    queries.build_search_index(con)
+
+    def hits(text, limit=8):
+        return [(r["kind"], r["id"], r["match"]) for r in queries.search(con, text, limit)]
+
+    assert hits("alpha") == [("film", "test_alpha", 2)]
+    assert hits("golf picture") == [("film", "test_golf", 0)]  # "The" aside
+    assert hits("9 hotel") == [("film", "test_hotel", 1)]
+    # films by gross, then people by credits (ties by name)
+    assert hits("test", 3) == [("film", "test_delta", 1), ("film", "test_bravo", 1), ("film", "test_alpha", 1),
+                               ("person", "P10", 1), ("person", "P1", 1), ("person", "P11", 1)]
+    assert hits("Test-Film  ALPHA!") == [("film", "test_alpha", 0)]  # punctuation and case aside
+    assert hits("testdirector") == [("person", "P1", 3), ("person", "P2", 3), ("person", "P3", 3)]
+    assert hits("...") == []
+    assert hits("zzz") == []
+    row = queries.search(con, "ten")[0]
+    assert (row["name"], row["directed"], row["acted"], row["weight"]) == ("Test Actor Ten", 0, 3, 3)

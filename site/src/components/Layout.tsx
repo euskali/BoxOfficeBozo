@@ -1,6 +1,8 @@
-import { Fragment, useId } from 'react'
-import { NavLink, Outlet } from 'react-router'
+import { Fragment, useEffect, useState } from 'react'
+import { Link, NavLink, Outlet, useLocation } from 'react-router'
+import { getManifest } from '../db/store'
 import { formatRetroDate } from '../lib/formatRetroDate'
+import SearchBox from './SearchBox'
 
 const NAV = [
   { to: '/', label: 'Home', end: true },
@@ -18,39 +20,49 @@ const BADGES = [
   { file: 'badge-any-browser.svg', alt: 'Best viewed in any browser' },
 ]
 
+const BROWSE = [
+  { to: '/leaderboard', label: 'All-time leaderboard' },
+  { to: '/leaderboard?m=cpi', label: 'Adjusted for inflation' },
+  { to: '/leaderboard?m=admissions', label: 'By tickets sold' },
+  { to: '/people', label: 'Top directors' },
+  { to: '/people?role=actor', label: 'Top actors' },
+  { to: '/weekend', label: 'Latest weekend chart' },
+  { to: '/films', label: 'Films A to Z' },
+]
+
+const NEWS = [
+  { date: 'Nov 24 2026', text: 'The time machine is open! Leaderboards, film and people pages, and weekend charts for any date since 1982.' },
+  { date: 'Nov 5 2026', text: 'Site scaffolded. Hello 1999!' },
+]
+
 const REPO_URL = 'https://github.com/euskali/BoxOfficeBozo'
 const NOTICE_URL = `${REPO_URL}/blob/main/DATA_NOTICE.md`
 
-function Sidebar() {
-  const searchId = useId()
-  const noteId = useId()
+function Sidebar({ search }: { search: boolean }) {
   return (
     <aside aria-label="Sidebar" className="flex flex-col gap-3 md:w-[190px] md:shrink-0">
-      <section className="box" aria-labelledby="side-search">
-        <h2 id="side-search" className="bar m-0 text-body">
-          Search
-        </h2>
-        <form role="search" className="p-2" onSubmit={(e) => e.preventDefault()}>
-          <label htmlFor={searchId} className="mb-1 block text-small">
-            Search films and people
-          </label>
-          <div className="flex gap-1">
-            <input
-              id={searchId}
-              type="text"
-              name="q"
-              autoComplete="off"
-              aria-describedby={noteId}
-              className="w-full min-w-0 flex-1"
-            />
-            <button type="submit" className="btn-bevel" aria-label="Go">
-              [ Go ]
-            </button>
+      {search && (
+        <section className="box" aria-labelledby="side-search">
+          <h2 id="side-search" className="bar m-0 text-body">
+            Search
+          </h2>
+          <div className="p-2">
+            <SearchBox />
           </div>
-          <p id={noteId} className="mb-0 mt-1 text-small text-muted">
-            Search arrives later.
-          </p>
-        </form>
+        </section>
+      )}
+
+      <section className="box" aria-labelledby="side-browse">
+        <h2 id="side-browse" className="bar m-0 text-body">
+          Browse
+        </h2>
+        <ul className="side-list m-0 list-disc py-2 pl-6 pr-2">
+          {BROWSE.map((b) => (
+            <li key={b.to}>
+              <Link to={b.to}>{b.label}</Link>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className="box" aria-labelledby="side-news">
@@ -58,17 +70,58 @@ function Sidebar() {
           Site News
         </h2>
         <ul className="m-0 list-disc py-2 pl-6 pr-2 text-small">
-          <li>
-            <b>Nov 5 2026:</b> Site scaffolded. Hello 1999!
-          </li>
+          {NEWS.map((n) => (
+            <li key={n.date}>
+              <b>{n.date}:</b> {n.text}
+            </li>
+          ))}
         </ul>
       </section>
     </aside>
   )
 }
 
+/** A loud box when public/data holds `make sample-data` output instead of real data. */
+function SampleBanner() {
+  const [sample, setSample] = useState(false)
+  useEffect(() => {
+    let live = true
+    getManifest().then((m) => live && setSample(m?.sample === true))
+    return () => {
+      live = false
+    }
+  }, [])
+  if (!sample) return null
+  return (
+    <p className="sample-banner" role="note">
+      <b>SAMPLE DATA:</b> these are fictional films with made-up numbers, from <code>make sample-data</code>, for
+      local development only. Nothing here is real box office data.
+    </p>
+  )
+}
+
+/** "/" jumps to the search box from anywhere (unless you're typing in a field). */
+function useSlashToSearch(): void {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return
+      const box = document.querySelector<HTMLInputElement>('input[data-site-search]')
+      if (box) {
+        e.preventDefault()
+        box.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+}
+
 export default function Layout() {
   const base = import.meta.env.BASE_URL
+  const { pathname } = useLocation()
+  useSlashToSearch()
   return (
     <div className="mx-auto max-w-[980px] px-2 pb-6">
       <a
@@ -85,7 +138,7 @@ export default function Layout() {
           </div>
           <div className="text-small text-muted">Box office history, as it happened</div>
         </div>
-        <nav aria-label="Main" className="border-t border-edge bg-page px-3 py-1">
+        <nav aria-label="Main" className="top-nav border-t border-edge bg-page px-3 py-1">
           <ul className="m-0 flex list-none flex-wrap p-0">
             {NAV.map((item, i) => (
               <Fragment key={item.to}>
@@ -107,11 +160,12 @@ export default function Layout() {
 
       <div className="mt-3 flex flex-col gap-3 md:flex-row">
         {/* Sidebar sits after main in the DOM so it collapses under the content on mobile. */}
-        <main id="content" tabIndex={-1} className="min-w-0 flex-1 md:order-2">
+        <main id="content" tabIndex={-1} className="min-h-[85vh] min-w-0 flex-1 md:order-2">
+          <SampleBanner />
           <Outlet />
         </main>
         <div className="md:order-1">
-          <Sidebar />
+          <Sidebar search={pathname !== '/'} />
         </div>
       </div>
 

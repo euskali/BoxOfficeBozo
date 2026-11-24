@@ -1,5 +1,5 @@
 // @vitest-environment node
-// The shared ranking SQL, run in DuckDB-WASM (Node build) on the same synthetic fixture that
+// The shared site SQL, run in DuckDB-WASM (Node build) on the same synthetic fixture that
 // etl/tests/test_queries.py runs in Python duckdb. Expected values: testdata/fixture.sql's header.
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -11,12 +11,22 @@ import { toRows, type Row } from '../db/rows'
 import engine from './engine.json'
 import pkg from '../../package.json'
 import {
+  browseFilms,
   cpiFactor,
+  DERIVED,
+  film,
+  filmCredits,
+  filmography,
   filmRankTimeline,
+  filmReleases,
+  filmWeekends,
+  latestDate,
   leaderboard,
   MEASURES,
+  person,
   personRank,
   personTotals,
+  search,
   weekendChart,
   type Query,
 } from './index'
@@ -161,5 +171,119 @@ describe('weekend_chart and cpi_factor', () => {
 
   it('converts 1982-84 dollars to a month’s dollars', () => {
     expect(pick(run(cpiFactor({ onDate: '2000-01-01' })), 'month', 'factor', 'is_interpolated')).toEqual([['1995-06-01', 1.525, true]])
+  })
+
+  it('gives last week’s gross and the charts either side', () => {
+    const rows = run(weekendChart({ onDate: '1991-01-16' }))
+    expect(pick(rows, 'title_id', 'weekend_gross', 'last_weekend_gross', 'prev_weekend_end', 'next_weekend_end')).toEqual([
+      ['test_charlie', 250, 50, '1991-01-06', '1995-06-04'],
+      ['test_bravo', 200, 200, '1991-01-06', '1995-06-04'],
+    ])
+    expect(pick(run(weekendChart({ onDate: '1995-06-04' })), 'last_rank', 'last_weekend_gross', 'prev_weekend_end', 'next_weekend_end')).toEqual([
+      [null, null, '1991-01-13', null],
+    ])
+  })
+})
+
+describe('leaderboard compared with an earlier date', () => {
+  it('ranks the earlier date within the same year filters', () => {
+    expect(pick(run(leaderboard({ asOf: '1995-06-04', measure: 'nominal', compareTo: '1991-01-13' })), 'title_id', 'rank', 'prev_rank')).toEqual([
+      ['test_delta', 1, null],
+      ['test_bravo', 2, 1],
+      ['test_alpha', 3, 2],
+      ['test_charlie', 3, 2],
+      ['test_echo', 5, 4],
+      ['test_foxtrot', 6, null],
+    ])
+    expect(
+      pick(run(leaderboard({ asOf: '1995-06-04', measure: 'nominal', fromYear: 1991, compareTo: '1991-01-13' })), 'title_id', 'prev_rank'),
+    ).toEqual([
+      ['test_delta', null],
+      ['test_bravo', 1],
+      ['test_charlie', 2],
+      ['test_foxtrot', null],
+    ])
+    expect(run(latestDate())).toEqual([{ as_of: '1995-06-04' }])
+  })
+})
+
+describe('film pages', () => {
+  it('gives the titles row with its latest totals', () => {
+    const alpha = run(film({ titleId: 'test_alpha' }))
+    expect(pick(alpha, 'title', 'year', 'release_date', 'distributor', 'first_as_of', 'last_as_of', 'cume_nominal', 'cume_cpi', 'cume_admissions', 'releases', 'weekends')).toEqual([
+      ['Test Film Alpha', 1990, '1990-01-05', 'Fictional Pictures', '1990-01-07', '1990-01-14', 300, 450, 150, 1, 2],
+    ])
+    expect(pick(run(film({ titleId: 'test_foxtrot' })), 'cume_nominal', 'cume_cpi', 'cume_admissions', 'releases')).toEqual([[120, null, null, null]])
+    expect(pick(run(film({ titleId: 'test_echo' })), 'baseline', 'baseline_is_rental', 'pre1982_baseline_gross')).toEqual([[true, true, 250]])
+    expect(pick(run(film({ titleId: 'test_golf' })), 'title', 'cume_nominal')).toEqual([['The Golf Picture', null]])
+    expect(run(film({ titleId: 'no_such_title' }))).toEqual([])
+  })
+
+  it('lists credits, releases and weekends', () => {
+    expect(pick(run(filmCredits({ titleId: 'test_charlie' })), 'role', 'billing', 'person_id')).toEqual([
+      ['director', null, 'P1'],
+      ['actor', 3, 'P12'],
+      ['actor', null, 'P13'],
+    ])
+    expect(pick(run(filmReleases({ titleId: 'test_delta' })), 'release_id', 'label', 'weekends', 'is_rerelease', 'total_gross')).toEqual([
+      ['rel_delta', 'Special Edition', 1, true, 1000],
+    ])
+    expect(pick(run(filmWeekends({ titleId: 'test_bravo' })), 'weekend_end', 'rank', 'weekend_gross', 'last_weekend_gross', 'total_gross')).toEqual([
+      ['1991-01-06', 1, 200, null, 200],
+      ['1991-01-13', 2, 200, 200, 400],
+    ])
+  })
+})
+
+describe('person pages', () => {
+  it('counts credits by role', () => {
+    expect(run(person({ personId: 'P1' }))).toEqual([{ person_id: 'P1', name: 'Test Director One', imdb_id: null, directed: 3, acted: 0 }])
+    expect(run(person({ personId: 'P99' }))).toEqual([])
+  })
+
+  it('values each film on the date and marks the credits that count', () => {
+    const rows = run(filmography({ personId: 'P10', asOf: '1995-06-04', measure: 'nominal' }))
+    expect(pick(rows, 'title_id', 'billing', 'counted', 'value', 'all_time_rank')).toEqual([
+      ['test_alpha', 1, true, 300, 3],
+      ['test_bravo', 5, false, 400, 2],
+      ['test_delta', 4, true, 1000, 1],
+    ])
+    expect(pick(run(filmography({ personId: 'P12', asOf: '1995-06-04', measure: 'cpi' })), 'title_id', 'value', 'all_time_rank', 'baseline', 'baseline_is_rental')).toEqual([
+      ['test_echo', 600, 2, true, true],
+      ['test_charlie', 270, 5, false, null],
+    ])
+  })
+})
+
+describe('browse and search', () => {
+  it('files films by first letter past a leading article', () => {
+    expect(pick(run(browseFilms({ letter: 'T', limit: 2, offset: 1 })), 'title_id', 'gross', 'matching')).toEqual([
+      ['test_bravo', 400, 6],
+      ['test_charlie', 300, 6],
+    ])
+    expect(pick(run(browseFilms({ letter: 'g' })), 'title')).toEqual([['The Golf Picture']])
+    expect(pick(run(browseFilms({ letter: '#' })), 'title_id')).toEqual([['test_hotel']])
+  })
+
+  it('finds films and people by word start', () => {
+    conn.query(DERIVED.search_index.sql)
+    const hits = (text: string, limit?: number) => pick(run(search({ text, limit })), 'kind', 'id', 'match')
+    expect(hits('alpha')).toEqual([['film', 'test_alpha', 2]])
+    expect(hits('golf picture')).toEqual([['film', 'test_golf', 0]])
+    expect(hits('test', 3)).toEqual([
+      ['film', 'test_delta', 1],
+      ['film', 'test_bravo', 1],
+      ['film', 'test_alpha', 1],
+      ['person', 'P10', 1],
+      ['person', 'P1', 1],
+      ['person', 'P11', 1],
+    ])
+    expect(hits('Test-Film  ALPHA!')).toEqual([['film', 'test_alpha', 0]])
+    expect(hits('testdirector')).toEqual([
+      ['person', 'P1', 3],
+      ['person', 'P2', 3],
+      ['person', 'P3', 3],
+    ])
+    expect(hits('...')).toEqual([])
   })
 })
