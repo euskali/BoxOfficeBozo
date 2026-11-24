@@ -9,11 +9,15 @@ export interface Crumb {
 
 const SITE = 'BoxOfficeBozo'
 
-/** Sets the browser tab's title. */
-export function useTitle(title: string | null): void {
+/**
+ * Sets the browser tab's title. While `pending` (the page's name is still loading) it leaves the
+ * title alone: a film or person page file already carries the right one (boffo_etl/route_pages.py).
+ */
+export function useTitle(title: string | null, pending = false): void {
   useEffect(() => {
+    if (pending) return
     document.title = title ? `${title} - ${SITE}` : `${SITE}: Box office history, as it happened`
-  }, [title])
+  }, [title, pending])
 }
 
 /** Breadcrumbs like "Home > Films > T > Titanic (1997)"; the last crumb is the current page. */
@@ -41,6 +45,7 @@ export default function PageHead({
   crumbs,
   title,
   docTitle,
+  docTitlePending = false,
   children,
 }: {
   section: string
@@ -48,9 +53,11 @@ export default function PageHead({
   title: ReactNode
   /** The tab title; defaults to `title` when that's a string. */
   docTitle?: string | null
+  /** The tab title isn't known yet (still loading): keep the current one. */
+  docTitlePending?: boolean
   children?: ReactNode
 }) {
-  useTitle(docTitle !== undefined ? docTitle : typeof title === 'string' ? title : null)
+  useTitle(docTitle !== undefined ? docTitle : typeof title === 'string' ? title : null, docTitlePending)
   return (
     <>
       <SectionBar>{section}</SectionBar>

@@ -32,6 +32,8 @@ The data is built only in CI, so a fresh clone has none. Fill `site/public/data/
 
 Then `make site-dev`. On Windows without `make`, run `uv --directory etl run python -m boffo_etl.pull_data` and `cd site && npm run dev`.
 
+`make site-build` is `npm run build` followed by `python -m boffo_etl.route_pages`, which writes a page file for every route (about 78,000 with the real data) so GitHub Pages serves deep links with status 200 rather than 404.
+
 ## Credits
 Data from the Purdue STAT 695 dataset (Box Office Mojo weekend charts, 1982–2016), archived Box Office Mojo pages via the Internet Archive Wayback Machine and Common Crawl, Wikidata (CC0), and the U.S. Bureau of Labor Statistics. Non-commercial. Not affiliated with IMDb, Box Office Mojo, or The Numbers. See [DATA_NOTICE.md](DATA_NOTICE.md).
 
