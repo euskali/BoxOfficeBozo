@@ -32,8 +32,9 @@ def releases(s: pl.DataFrame) -> pl.DataFrame:
     return s.select("release_id", pl.col("title_id").alias("title")).unique()
 
 
-def cpi(values: dict[date, float]) -> pl.DataFrame:
-    return pl.DataFrame({"month": list(values), "cpi": list(values.values())}, schema=cume.cpi_source.SCHEMA)
+def cpi(values: dict[date, float], interpolated: set[date] = frozenset()) -> pl.DataFrame:
+    return pl.DataFrame({"month": list(values), "cpi": list(values.values()),
+                         "is_interpolated": [m in interpolated for m in values]}, schema=cume.cpi_source.SCHEMA)
 
 
 def tickets(prices: dict[int, float]) -> list[dict]:
@@ -218,3 +219,11 @@ def test_run_needs_the_cpi_table(repo):
 
 def test_run_without_built_tables_does_nothing(repo):
     assert cume.run() == []
+
+
+def test_weekends_in_an_interpolated_cpi_month_are_counted():
+    s = snaps([("r", "tt1", D(2025, 9, 28), 100, 100, 1), ("r", "tt1", D(2025, 10, 5), 300, 200, 2)])
+    c = {D(2025, 9, 1): 100.0, D(2025, 10, 1): 200.0, D(2025, 11, 1): 300.0}
+    b = cume.build(s, releases(s), titles(), cpi(c, {D(2025, 10, 1)}), tickets({2025: 10.0}))
+    assert [r[2] for r in rows(b, "tt1")] == [100.0, 200.0]
+    assert (b.report["deltas_at_interpolated_cpi"], b.report["gross_at_interpolated_cpi"]) == (1, 200)

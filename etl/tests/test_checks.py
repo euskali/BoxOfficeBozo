@@ -411,7 +411,8 @@ def write_m5(repo, *, cpi_rows=None, tickets=None, cume_rows=None, report=None, 
     site, build_dir = repo / "site/public/data", repo / "data/build"
     build_dir.mkdir(parents=True, exist_ok=True)
     months = [date(1913 + i // 12, i % 12 + 1, 1) for i in range((1990 - 1913) * 12 + 2)]
-    cpi = pl.DataFrame({"month": months, "cpi": [100.0] * len(months)}, schema=cume.cpi_source.SCHEMA)
+    cpi = pl.DataFrame({"month": months, "cpi": [100.0] * len(months), "is_interpolated": [False] * len(months)},
+                       schema=cume.cpi_source.SCHEMA)
     b = cume.build(pl.read_parquet(site / "snapshots.parquet"), pl.read_parquet(site / "releases.parquet"),
                    pl.read_parquet(site / "titles.parquet"), cpi,
                    [{"year": 1989, "avg_price_usd": 4.0, "source": "NATO table", "source_url": ""}])
@@ -439,14 +440,15 @@ def test_clean_m5_tables_pass(repo, capsys):
 
 
 def test_m5_table_errors(repo, capsys):
-    write_m5(repo, cpi_rows=[(date(1913, 1, 1), 9.8), (date(1913, 3, 1), 0.0), (date(1913, 3, 1), 9.9)],
+    write_m5(repo, cpi_rows=[(date(1913, 1, 1), 9.8, False), (date(1913, 3, 1), 0.0, False),
+                             (date(1913, 3, 1), 9.9, None)],
              tickets=[(1989, 4.0, "NATO table", False), (1990, 4.0, "NATO table", True), (1992, 4.1, "x", False)],
              cume_rows=[("bb_a", SUN, 100, 100.0, 25.0, False), ("bb_a", SUN, 100, 100.0, 25.0, False),
                         ("bb_x", SUN, -5, -5.0, -1.0, False)])
     code, out = run(capsys)
     assert code == 1
     for message in ("1 months appear more than once", "1 months are missing between 1913-01-01 and 1913-03-01",
-                    "1 months have no positive index", "years 1989-1992 aren't each there once (3 rows)",
+                    "2 months have no positive index or no is_interpolated flag", "years 1989-1992 aren't each there once (3 rows)",
                     "1 years' is_interpolated doesn't match their source",
                     "1 (title_id, as_of) pairs appear more than once, e.g. bb_a 1990-01-07",
                     "1 title_ids are not in titles, e.g. bb_x", "1 charted titles have no rows, e.g. bb_b",
@@ -463,11 +465,14 @@ def test_m5_report_warnings(repo, capsys):
                            "overlaps": [{"release_id": "bom:rl1", "title": "Jaws", "kind": "late_run",
                                          "opened": "1975-06-22", "excess": 254, "covered": 0}]},
              cpi_report={"stale_windows": ["1983-1992 (1990-W10)"], "fetch": {"stopped": "fetching disabled"},
-                         "built_on": "1990-06-30"})
+                         "built_on": "1990-06-30",
+                         "interpolated_months": [{"month": "1989-10", "cpi": 99.5, "note": "Data unavailable"}]})
     code, out = run(capsys)
     assert code == 0, out
     for message in ("CPI answers from an earlier week are used for 1983-1992 (1990-W10) (this week's request: "
                     "fetching disabled)", "the latest CPI month is 1990-02, 149 days before the build",
+                    "BLS published no index for 1 months, interpolated between the months around them and flagged "
+                    "is_interpolated, e.g. 1989-10 (Data unavailable): 99.5",
                     "ticket prices for 1990-1990 are carried forward",
                     "2 years' ticket prices are interpolated between sourced years (no figure found yet): 2020, 2021",
                     "2 weekly changes ($1,500) are after the latest CPI month (1990-02)",

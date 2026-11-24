@@ -27,7 +27,9 @@ admissions, run about 4-6% low.
 CPI facts are BLS's own (series CUUR0000SA0, https://data.bls.gov/timeseries/CUUR0000SA0):
 the index is 9.8 in January 1913 and averages 100 over 1982-84 (its reference
 period), and the October 2026 index was 337.511 (read from the BLS Public Data
-API on 22 Nov 2026). Ticket prices are the sourced rows of
+API on 22 Nov 2026). The same answer lists October 2025 as "-", footnoted "Data
+unavailable due to the 2025 lapse in appropriations", between September's
+324.800 and November's 324.122, so the build interpolates it (324.461). Ticket prices are the sourced rows of
 data/manual/ticket_prices.csv (NATO's table: $4.69 in 1998).
 """
 
@@ -94,6 +96,8 @@ def test_cpi_matches_bls(con):
 
     assert cpi(date(1913, 1, 1)) == 9.8
     assert cpi(date(2026, 10, 1)) == 337.511
+    assert (cpi(date(2025, 9, 1)), cpi(date(2025, 10, 1)), cpi(date(2025, 11, 1))) == (324.800, 324.461, 324.122)
+    assert con.execute("SELECT list(strftime(month, '%Y-%m')) FROM cpi WHERE is_interpolated").fetchone()[0] == ["2025-10"]
     base = con.execute("SELECT avg(cpi) FROM cpi WHERE month BETWEEN '1982-01-01' AND '1984-12-01'").fetchone()[0]
     assert base == pytest.approx(100.0, abs=0.05)
 
