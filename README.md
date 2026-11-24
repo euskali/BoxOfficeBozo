@@ -22,7 +22,7 @@ Looks like 1999. Works like 2026.
 - [x] M4 Credits & people
 - [x] M5 Inflation & admissions
 - [x] M6 Ranking engine + golden tests
-- [ ] M7 Site
+- [x] M7 Site
 - [ ] M8 Data notes & launch
 
 ## Working on the site
