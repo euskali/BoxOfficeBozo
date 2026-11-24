@@ -15,6 +15,7 @@ Hobby, non-commercial site: historical domestic box office rankings **as of any 
 - CI: GitHub Actions. `ci.yml` runs on PRs (guard, pytest, vitest, `checks.py`, site build). `deploy.yml` runs on push to `main` and every Monday (the weekly run also keeps the raw-download cache from expiring): the `data-build` job fetches, builds the Parquet and the site, and uploads the Pages artifact. Then the `deploy` job publishes it.
 - Live at https://boxofficebozo.com (GitHub Pages custom domain, verified on the account; Cloudflare DNS records are DNS only, never proxied). The `SITE_BASE_PATH` repo variable is `/`. Internal names (`boffo_etl`, `BOFFO_*` env vars, the local folder) predate the BoxOfficeBozo rename and are intentional.
 - Data ships to the site as Parquet in `site/public/data/`. It is **built in CI, gitignored, and published only inside the Pages artifact.**
+- The site loads DuckDB-WASM and each table only when a page needs them (`site/src/db/store.ts`), after the page's own text has painted. Everything it loads is served by the site itself, including DuckDB's Parquet extension (`site/scripts/duckdb-extensions.mjs` fetches the official build at build time and checks the SHA-256 pinned in `site/src/queries/engine.json`): visitors' browsers never call a third-party server.
 
 ## Data sources (and what's banned)
 - Allowed: Purdue stat695data (GitHub), Wayback Machine and Common Crawl captures of Box Office Mojo pages, Wikidata (CC0, queried through QLever at qlever.dev; the Wikidata API's `wbgetentities` for credits in statement order) for titles, IMDb IDs (P345), directors and cast, BLS CPI-U from the BLS Public Data API v1 (not FRED: its terms bar caching). Average ticket prices are cited rows in `data/manual/ticket_prices.csv` (NATO's archived table, the Cinema Foundation for 2022).
@@ -40,6 +41,7 @@ Hobby, non-commercial site: historical domestic box office rankings **as of any 
 - `make check`: data-quality report
 - `make test`: pytest and vitest
 - `make site-dev` / `make site-build`
+- `make sample-data`: fictional tables in `site/public/data/` for working on the site (marked `"sample": true`; the site shows a banner, data tests skip, `make check` fails). `make pull-data`: copy the real published tables from the live site instead.
 - `make guard`: fail if data files are tracked by git
 - On Windows without `make`, run the underlying commands from the `Makefile` (e.g. `uv --directory etl run pytest`, `cd site && npm test`).
 

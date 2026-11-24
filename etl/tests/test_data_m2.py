@@ -20,11 +20,16 @@ import duckdb
 import pytest
 
 from boffo_etl import paths
+from boffo_etl.sample import is_sample_data
 from boffo_etl.checks import GAP_REASONS
 from boffo_etl.sources.bom_weekend import latest_completed_sunday
 
 
 def _require(path):
+    if is_sample_data():  # make sample-data: fictional, so these real-data checks don't apply
+        if os.environ.get("BOFFO_REQUIRE_DATA") == "1":
+            pytest.fail("site/public/data holds sample data and BOFFO_REQUIRE_DATA=1")
+        pytest.skip("site/public/data holds sample data (make sample-data)")
     if path.is_file():
         return path
     if os.environ.get("BOFFO_REQUIRE_DATA") == "1":

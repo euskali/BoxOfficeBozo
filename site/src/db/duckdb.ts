@@ -4,8 +4,10 @@ let dbPromise: Promise<AsyncDuckDB> | undefined
 
 /**
  * Lazily creates (once) a DuckDB-WASM instance. The library, its worker and
- * its wasm binaries are all self-hosted by Vite (`?url` imports), so the site
- * never calls a CDN at runtime. Nothing here runs until getDb() is called.
+ * its wasm binaries are all self-hosted by Vite (`?url` imports), and so is the
+ * Parquet extension DuckDB loads at runtime (scripts/duckdb-extensions.mjs puts
+ * it in public/duckdb-extensions), so the site never calls a CDN at runtime.
+ * Nothing here runs until getDb() is called.
  */
 export function getDb(): Promise<AsyncDuckDB> {
   dbPromise ??= createDb().catch((err: unknown) => {
@@ -31,5 +33,13 @@ async function createDb(): Promise<AsyncDuckDB> {
   const worker = new Worker(bundle.mainWorker!)
   const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING), worker)
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker)
+  // Extensions (read_parquet's) load from this site, not extensions.duckdb.org.
+  const repository = new URL(`${import.meta.env.BASE_URL}duckdb-extensions`, window.location.href).href
+  const conn = await db.connect()
+  try {
+    await conn.query(`SET custom_extension_repository = '${repository.replace(/'/g, "''")}'`)
+  } finally {
+    await conn.close()
+  }
   return db
 }

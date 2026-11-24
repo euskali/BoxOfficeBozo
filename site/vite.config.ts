@@ -15,5 +15,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     css: false,
+    // Page tests run real SQL through DuckDB-WASM; its first start takes a few seconds.
+    testTimeout: 30_000,
   },
 })

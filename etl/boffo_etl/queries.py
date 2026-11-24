@@ -50,10 +50,19 @@ def _day(d: date | str) -> str:
     return d.isoformat() if isinstance(d, date) else d
 
 
+def _maybe_day(d: date | str | None) -> str | None:
+    return None if d is None else _day(d)
+
+
 def leaderboard(con, as_of: date | str, measure: str, limit: int = 100, offset: int = 0,
                 from_year: int | None = None, to_year: int | None = None,
-                title_id: str | None = None) -> list[dict]:
-    return run(con, "leaderboard", [_day(as_of), measure, limit, offset, from_year, to_year, title_id])
+                title_id: str | None = None, compare_to: date | str | None = None) -> list[dict]:
+    return run(con, "leaderboard", [_day(as_of), measure, limit, offset, from_year, to_year, title_id,
+                                    _maybe_day(compare_to)])
+
+
+def latest_date(con) -> date | None:
+    return run(con, "latest_date", [])[0]["as_of"]
 
 
 def film_rank_timeline(con, title_id: str, measure: str) -> list[dict]:
@@ -78,3 +87,45 @@ def weekend_chart(con, on_date: date | str) -> list[dict]:
 def cpi_factor(con, on_date: date | str) -> dict | None:
     rows = run(con, "cpi_factor", [_day(on_date)])
     return rows[0] if rows else None
+
+
+# M7: the site's pages. Not ranking SQL, but shared the same way so both engines check it.
+
+def film(con, title_id: str) -> dict | None:
+    rows = run(con, "film", [title_id])
+    return rows[0] if rows else None
+
+
+def film_credits(con, title_id: str) -> list[dict]:
+    return run(con, "film_credits", [title_id])
+
+
+def film_releases(con, title_id: str) -> list[dict]:
+    return run(con, "film_releases", [title_id])
+
+
+def film_weekends(con, title_id: str) -> list[dict]:
+    return run(con, "film_weekends", [title_id])
+
+
+def person(con, person_id: str) -> dict | None:
+    rows = run(con, "person", [person_id])
+    return rows[0] if rows else None
+
+
+def filmography(con, person_id: str, as_of: date | str, measure: str,
+                top_billed: int = TOP_BILLED) -> list[dict]:
+    return run(con, "filmography", [person_id, _day(as_of), measure, top_billed])
+
+
+def browse_films(con, letter: str, limit: int = 100, offset: int = 0) -> list[dict]:
+    return run(con, "browse_films", [letter, limit, offset])
+
+
+def build_search_index(con) -> None:
+    """CREATE the search_index table search() reads (the browser builds it once, the same way)."""
+    con.execute(sql("search_index"))
+
+
+def search(con, text: str, limit: int = 8) -> list[dict]:
+    return run(con, "search", [text, limit])
