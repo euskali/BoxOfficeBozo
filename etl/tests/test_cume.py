@@ -140,6 +140,55 @@ def test_a_baseline_is_priced_at_its_release_year():
     assert b.report["baselines"] == 1 and b.report["baseline_total"] == 1_000_000
 
 
+def estimate(title_id: str, admissions: int, on: date) -> dict:
+    return {"title": title_id, "title_id": title_id, "admissions": admissions, "as_of": on, "source": "Test source"}
+
+
+# Ticket prices 1948 $0.40, 1958 $0.60 (so 1951 $0.46, 1952 $0.48), 1968 $1.00, 1998 $5.00 (carried on).
+REISSUE_PRICES = {1948: 0.40, 1958: 0.60, 1968: 1.00, 1998: 5.00}
+
+
+def test_a_published_estimate_prices_a_baseline_by_its_tickets():
+    """A 1939 film with $940,000 before 1982 and a 1998 re-issue that charted $500,000 ($5.00 a
+    ticket: 100,000 admissions), estimated at 2,100,000 lifetime admissions on 2018-12-22:
+
+    baseline admissions = 2,100,000 - 100,000 = 2,000,000, so $0.47 a ticket. The first year from
+    1939 whose ticket price reaches $0.47 is 1952 ($0.48), so the baseline is deflated by 1952's
+    CPI (26.5): 940,000 x 100 / 26.5. A 2019 re-release, after the estimate, adds on top.
+    """
+    c = {**flat_cpi(D(1913, 1, 1), D(2026, 10, 1)), **{D(1952, m, 1): 26.5 for m in range(1, 13)}}
+    s = snaps([("r98", "tt1", D(1998, 6, 28), 500_000, 500_000, 1),
+               ("r19", "tt1", D(2019, 3, 3), 100_000, 100_000, 1)])
+    t = titles([("tt1", 1939, 940_000.0, False)])
+    b = cume.build(s, releases(s), t, cpi(c), tickets(REISSUE_PRICES), [estimate("tt1", 2_100_000, D(2018, 12, 22))])
+    assert rows(b, "tt1") == [(D(1982, 1, 1), 940_000, round(940_000 * 100 / 26.5, 2), 2_000_000.0),
+                              (D(1998, 6, 28), 1_440_000, round(940_000 * 100 / 26.5 + 500_000, 2), 2_100_000.0),
+                              (D(2019, 3, 3), 1_540_000, round(940_000 * 100 / 26.5 + 600_000, 2), 2_120_000.0)]
+    [e] = b.report["admissions_estimates"]
+    assert (e["charted_admissions"], e["baseline_admissions"], e["gross_per_admission"], e["cpi_year"]) == (
+        100_000, 2_000_000, 0.47, 1952)
+    assert "problem" not in e
+
+
+def test_an_estimate_above_every_pre_1982_price_uses_1981():
+    t = titles([("tt1", 1939, 10_000_000.0, False)])
+    b = cume.build(snaps([]), releases(snaps([])), t, cpi(flat_cpi(D(1913, 1, 1), D(2026, 10, 1))),
+                   tickets(REISSUE_PRICES), [estimate("tt1", 1_000_000, D(2018, 12, 22))])
+    assert b.report["admissions_estimates"][0]["cpi_year"] == 1981  # $10 a ticket: more than any year to 1981
+    assert rows(b, "tt1")[0][3] == 1_000_000.0
+
+
+def test_an_estimate_that_cant_apply_is_reported_and_left_out():
+    s = snaps([("r", "tt1", D(1998, 6, 28), 5_000_000, 5_000_000, 1)])  # 1,000,000 admissions already
+    t = titles([("tt1", 1977, 2_000_000.0, False), ("tt2", 1990, None, None)])
+    b = cume.build(s, releases(s), t, cpi(flat_cpi(D(1913, 1, 1), D(2026, 10, 1))), tickets({1977: 2.0, 1998: 5.0}),
+                   [estimate("tt1", 900_000, D(2018, 12, 22)), estimate("tt2", 5, D(2018, 12, 22))])
+    by_id = {e["title_id"]: e for e in b.report["admissions_estimates"]}
+    assert "already count 1,000,000" in by_id["tt1"]["problem"]
+    assert by_id["tt2"]["problem"] == "the title has no pre-1982 baseline"
+    assert rows(b, "tt1")[0][3] == 1_000_000.0  # release-year pricing: $2,000,000 at 1977's $2.00
+
+
 def test_a_baseline_titles_1982_carry_in_isnt_counted_twice():
     """A film still showing in January 1982: its 1981 earnings are in the baseline."""
     t = titles([("tt1", 1981, 400.0, False)])

@@ -32,6 +32,7 @@ etl/                      Python 3.12 uv project
       cpi.py              CPI-U monthly, BLS series CUUR0000SA0 (public domain), from the BLS Public Data API v1
     match.py              release → title matching via Wikidata + overrides; builds titles.parquet
     cume.py               M5: each period's gross in CPI dollars and admissions; builds title_cume.parquet
+    queries.py            M6: runs the site's ranking SQL (site/src/queries) from Python, for tests
     build.py              orchestrates; writes data/build/*.parquet and site/public/data/*.parquet
     checks.py             data-quality checks (also run in CI)
   tests/                  pytest (offline; synthetic fixtures only)
@@ -40,7 +41,8 @@ data/
   raw/                    gitignored downloads; persisted between CI runs with actions/cache
   build/                  gitignored intermediate outputs
 site/                     Vite + React + TypeScript + Tailwind v4 + DuckDB-WASM (Vitest tests in src/)
-  src/queries/            ranking SQL shared by the browser and pytest
+  src/queries/            ranking SQL shared by the browser and pytest: leaderboard, film_rank_timeline,
+                          person_totals (and person_rank), weekend_chart, cpi_factor; engine.json pins DuckDB
   public/data/            gitignored; final Parquet built in CI, shipped only in the Pages artifact
 scripts/check-no-data.sh  `make guard`: fails if data files are tracked by git
 .github/workflows/        ci.yml (PRs) · deploy.yml (push to main: data-build → deploy)
@@ -85,6 +87,7 @@ The repo is public, so it holds **code, docs, and cited manual CSVs only**. No s
 - Built from period deltas: for each release, `delta = total_gross - previous total_gross`. Each delta is deflated by the CPI of its weekend month and divided by the average ticket price of its year. Then take cumulative sums.
 - Add one row per title at its first appearance. Pre-1982 baseline titles get a row at `1982-01-01` carrying the baseline.
 - A late run (M3) or a baseline title's 1982 carry-in counts, on its first weekend, only that weekend's gross plus whatever of its earlier total the title's other releases and baseline don't hold. That remainder is dated to the run's opening (or 1982-01-01) and priced there. See `cume.py`.
+- A baseline with a published lifetime admissions estimate (`admissions_estimates.csv`) takes its admissions from it: the estimate less what the title's charts count up to the estimate's date. Its CPI dollars use the CPI of the first year, from its release to 1981, whose average ticket price reaches the baseline's gross per admission. Other baselines are priced at their release year.
 
 **`people.parquet`** `person_id` (Wikidata QID) · `imdb_id` (nconst from Wikidata P345, nullable) · `name` (Wikidata English label)
 **`credits.parquet`** `title_id` · `person_id` · `role` (`director` | `actor`) · `billing` (int, 1 = top billed: actors with a P1545 series-ordinal qualifier first, in ordinal order, then the rest in Wikidata statement order; null for directors) · `billing_source` (`p1545` | `statement_order`, where that actor's place came from; null for directors)
@@ -96,6 +99,7 @@ Credits and titles come from **Wikidata (CC0)**, not the IMDb datasets. IMDb's n
 **Every row needs a real, citable source**: a publication with its date and page, or a stable URL (an archived copy is best). No made-up, rounded-to-feel-right, or hand-interpolated figures. `boffo_etl/manual.py` enforces exact headers, types, unique keys, a non-placeholder `source`, and an http(s) `source_url` when given. `make check` fails on violations. The files start with headers only, and rows are added as they're sourced.
 - `ticket_prices.csv` (`year,avg_price_usd,source,source_url,notes`): annual US average ticket price, reported years only. Prefer Cinema United (formerly NATO) figures and published statistical compendia. Don't transcribe Box Office Mojo's table. Gap years are interpolated **at build time** and flagged `is_interpolated` in `ticket_prices.parquet`. They're never written into the CSV.
 - `pre1982_baseline.csv` (`title,release_year,wikidata_qid,title_id,gross_usd,as_of,is_rental,source,source_url,notes`): the ~150 highest-grossing pre-1982 films, with domestic lifetime gross *as of Dec 31, 1981* (nominal) and an `is_rental` flag. Cite a dated publication (e.g. a specific Variety issue and page). Most period figures are **rentals**, so mark them so and never convert them silently. This is what keeps all-time lists as of 1984 correct (Star Wars, Jaws, The Exorcist, Gone with the Wind, etc.). Note that later re-release grosses (e.g. Star Wars 1982 re-release) come from snapshots and add on top of the baseline. Don't double count.
+- `admissions_estimates.csv` (`title,title_id,admissions,as_of,source,source_url,notes`): a published estimate of a baseline film's lifetime domestic admissions as of a date (Box Office Mojo's chart of estimated tickets, archived). It prices the baseline of a film whose pre-1982 money came from decades of re-issues, which release-year pricing would get badly wrong (Gone with the Wind at 1939's CPI: $4.6B in 2026 dollars, over twice the $2.06B its tickets give; and no ticket price before 1948 to count its admissions). Copy the figure as published; the build does the subtraction.
 - `id_overrides.csv` (`source_key,title_id,wikidata_qid,release_label,source,source_url,notes`): `source_key` → `title_id` for matches the matcher gets wrong or can't make. `source` is the evidence (e.g. the Wikidata item and the archived chart page).
 - `title_groups.csv` (`source_key,title_id,release_label,source,source_url,notes`): explicit re-release groupings where automatic grouping fails.
 
@@ -194,7 +198,7 @@ Credits and titles come from **Wikidata (CC0)**, not the IMDb datasets. IMDb's n
 ### M6 — Ranking engine (shared SQL)
 - Put the queries in `site/src/queries/*.sql` and run the identical SQL in Python tests against the same Parquet.
 - Pin Python `duckdb` to the same engine version that `@duckdb/duckdb-wasm` bundles, and add a test that compares `SELECT version()` (pinned in `site/package.json`). In M0 they differ: wasm 1.33.1-dev57 bundles a 1.4/1.5-era engine, while Python resolved duckdb 2.0.
-  - `leaderboard(as_of, measure, limit, offset, filters)`: ASOF JOIN of titles × latest `title_cume` ≤ as_of, rank with `RANK()`.
+  - `leaderboard(as_of, measure, limit, offset, filters)`: each title's latest `title_cume` row ≤ as_of, rank with `RANK()`.
   - `film_rank_timeline(title_id, measure)`: the film's rank at every weekend since release. Precompute per title at build time if it's too slow client-side, stored as `rank_timeline/{title_id}.parquet` or one partitioned file.
   - `person_totals(as_of, role, measure)` and `person_rank`.
   - `weekend_chart(weekend_end)`.
@@ -206,6 +210,15 @@ Credits and titles come from **Wikidata (CC0)**, not the IMDb datasets. IMDb's n
   - Star Wars: The Force Awakens becomes #1 domestic nominal in January 2016.
   - On the admissions measure, Gone with the Wind stays #1 throughout (requires the baseline).
 - **Accept:** golden tests pass. The leaderboard for any date returns in < 300 ms in the browser on a mid-range laptop.
+- *Learned (Nov 2026):*
+  - The pinned `@duckdb/duckdb-wasm` 1.33.1-dev57.0 (npm's `latest`) bundles engine v1.5.4, so Python `duckdb` is pinned to 1.5.4. `site/src/queries/engine.json` records the pair; `queries.test.ts` checks the wasm's `SELECT version()` and `test_queries.py` checks Python's. Both suites run every query on one synthetic fixture (`site/src/queries/testdata/fixture.sql`) with the same expected values.
+  - Parameters are positional (`$1`, `$2`...), the one style both clients bind; each file's header lists them, `index.ts` and `queries.py` keep the order. Dates go in as `'YYYY-MM-DD'` and are cast in SQL.
+  - "Latest row on or before the date" is an `arg_max_null` aggregate, not an ASOF JOIN: the same rows, about five times faster in DuckDB-WASM (15–20 ms against 95 ms for 18.5k titles), and `arg_max_null` keeps a NULL latest value NULL where plain `arg_max` would fall back to an older one.
+  - `film_rank_timeline` runs in SQL, no precompute needed: every title's cume is a run of constant segments, each overlap of another title's higher segment with one of the film's adds +1/−1 rank events, and a running sum gives the rank on each change date. 200–380 ms per film in the browser, about 80 ms in Python, at most about 1,000 steps (a film ranked about 18,000th).
+  - Timing in the in-app browser (Chromium, this PC, live data loaded into memory): the leaderboard took 13–205 ms over 21 date/measure pairs, median 45 ms; the slowest was the first call after loading. Career totals 96–191 ms, a weekend chart 38 ms. Loading DuckDB-WASM took 2.4 s and the seven tables 1.3 s. DuckDB-WASM runs single-threaded, but this desktop CPU is probably faster than a mid-range laptop's.
+  - Golden tests (`test_data_m6.py`, each citing its source): with Star Wars' baseline ($307,263,857, its 1977 release row in Box Office Mojo's release summary, covering every run before the 1982 re-issue), E.T. passes it on the weekend of 16 Jan 1983, before Lucas's Variety ad of 19 Jan 1983; Titanic leads from 15 Mar 1998 (it passed Star Wars on Saturday 14 Mar), Avatar from 7 Feb 2010 (2 Feb), The Force Awakens from 10 Jan 2016 (6 Jan). Gone with the Wind leads on admissions at every date from 1982.
+  - Box Office Mojo's estimated tickets (22 Dec 2018) give Gone with the Wind 202,044,600 and Star Wars 178,119,600. Our charts count 35.4M of Star Wars' (its 1982 re-issue and 1997 Special Edition), leaving 142.7M before 1982 ($2.15 a ticket, priced at 1977's CPI). Gone with the Wind's $189.5M before 1982 comes to $0.94 a ticket, which prices it at 1964's CPI: about $2.06B in October 2026 dollars, where 1939 prices would have given $4.6B.
+  - Still open: only those two baselines are sourced, of the ~150 the plan wants, so leaderboards before the late 1980s miss most older films (Jaws and The Muppet Movie appear through their late runs). Many re-issues of pre-1982 films are unmatched: charted titles like "Snow White and the Seven Dwarfs (Re-issue) (1987)" have a year tag after the re-issue wording, so neither M1's re-release rule nor M3's title matching strips it (Gone with the Wind's 1998 re-issue too). And a late run that became its title's only release gives the title its chart year (Jaws shows 2024).
 
 ### M7 — Site (per DESIGN.md)
 - Pages: Home, Film, Leaderboard, Person, Weekend Chart, About/Data Notes.
