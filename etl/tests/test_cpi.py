@@ -24,6 +24,7 @@ class FakeBLS:
         self.latest = latest
         self.requests: list[dict] = []
         self.status = "REQUEST_SUCCEEDED"
+        self.unavailable: set[date] = set()  # months BLS lists as "-" with a footnote
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         assert request.method == "POST" and str(request.url) == cpi.API
@@ -37,7 +38,10 @@ class FakeBLS:
             months = [date(y, m, 1) for m in range(12, 0, -1) if date(y, m, 1) <= self.latest]
             if len(months) == 12:
                 data.append({"year": str(y), "period": "M13", "periodName": "Annual", "value": "0"})
-            data += [{"year": str(m.year), "period": f"M{m.month:02d}", "value": str(value(m)), "footnotes": [{}]}
+            data += [{"year": str(m.year), "period": f"M{m.month:02d}", "value": "-", "footnotes": [
+                         {"code": "X", "text": "Data unavailable due to the 2025 lapse in appropriations"}]}
+                     if m in self.unavailable else
+                     {"year": str(m.year), "period": f"M{m.month:02d}", "value": str(value(m)), "footnotes": [{}]}
                      for m in months]
         doc = {"status": "REQUEST_SUCCEEDED", "message": [],
                "Results": {"series": [{"seriesID": q["seriesid"][0], "data": data}]}}
@@ -139,3 +143,25 @@ def test_run_writes_the_table_and_report(bls, repo):
     assert out == repo / "data/build/cpi.parquet" and out.is_file()
     report = json.loads((repo / "data/build" / cpi.REPORT).read_text())
     assert report["series"] == "CUUR0000SA0" and report["base"] == "1982-84=100"
+
+
+def test_a_month_bls_has_no_index_for_is_interpolated_and_flagged(bls):
+    fake, f = bls
+    oct25 = date(2025, 10, 1)
+    fake.unavailable = {oct25}
+    r = cpi.ingest(f, NOV, log=lambda *a: None)
+    t = r.table
+    assert t.height == (2026 - 1913) * 12 + 10  # still every month
+    row = t.filter(t["month"] == oct25).row(0)
+    expected = round((value(date(2025, 9, 1)) + value(date(2025, 11, 1))) / 2, 3)
+    assert row == (oct25, expected, True)
+    assert t["is_interpolated"].sum() == 1
+    assert r.report["interpolated_months"] == [
+        {"month": "2025-10", "cpi": expected, "note": "Data unavailable due to the 2025 lapse in appropriations"}]
+
+
+def test_series_interpolates_between_the_published_months_around_a_gap():
+    t = cpi.series({date(2025, 8, 1): 100.0, date(2025, 11, 1): 103.0})
+    assert t.rows() == [(date(2025, 8, 1), 100.0, False), (date(2025, 9, 1), 101.0, True),
+                        (date(2025, 10, 1), 102.0, True), (date(2025, 11, 1), 103.0, False)]
+    assert cpi.series({}).height == 0

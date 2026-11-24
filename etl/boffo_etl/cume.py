@@ -28,6 +28,7 @@ get a row at 1982-01-01, priced at the release year's average CPI and ticket pri
 approximation; ``baseline`` is true on every row of such a title). Rentals stay rentals: the
 title's ``baseline_is_rental`` says so.
 
+A month BLS has no index for is interpolated in ``cpi.parquet`` (flagged ``is_interpolated``).
 Months after the latest published CPI use the latest index, and years after the latest sourced
 ticket price use that price; ``cume_report.json`` counts both, and the ticket price table flags
 every year that isn't a sourced figure (``is_interpolated``).
@@ -178,11 +179,12 @@ def price(d: pl.DataFrame, cpi: pl.DataFrame, prices: pl.DataFrame) -> Priced:
     """Each delta in 1982-84 dollars (its month's CPI; a baseline's: its year's average) and in
     admissions (its year's ticket price). Months after the latest CPI use the latest index."""
     monthly = dict(zip(cpi["month"].to_list(), cpi["cpi"].to_list()))
+    filled = set(cpi.filter(pl.col("is_interpolated"))["month"].to_list())
     latest_month = max(monthly) if monthly else None
     annual = {y: sum(v) / len(v) for y, v in _by_year(monthly).items()}
     tickets = dict(zip(prices["year"].to_list(), prices["avg_price"].to_list()))
     estimated = set(prices.filter(pl.col("is_interpolated"))["year"].to_list())
-    cpi_values, adm, carried, est = [], [], [], []
+    cpi_values, adm, carried, est, interp = [], [], [], [], []
     for amount, priced_on, kind in d.select("amount", "priced_on", "kind").iter_rows():
         if kind == BASELINE:
             c = annual.get(priced_on.year)
@@ -196,10 +198,12 @@ def price(d: pl.DataFrame, cpi: pl.DataFrame, prices: pl.DataFrame) -> Priced:
         adm.append(amount / p if p else None)
         carried.append(late)
         est.append(priced_on.year in estimated)
+        interp.append(kind != BASELINE and priced_on.replace(day=1) in filled)
     table = d.with_columns(pl.Series("cpi_dollars", cpi_values, dtype=pl.Float64),
                            pl.Series("admissions", adm, dtype=pl.Float64),
                            pl.Series("cpi_carried", carried, dtype=pl.Boolean),
-                           pl.Series("price_estimated", est, dtype=pl.Boolean))
+                           pl.Series("price_estimated", est, dtype=pl.Boolean),
+                           pl.Series("cpi_interpolated", interp, dtype=pl.Boolean))
     return Priced(table, {"latest_cpi_month": latest_month.isoformat() if latest_month else None})
 
 
@@ -289,6 +293,8 @@ def _report(d: Deltas, p: Priced, tickets: pl.DataFrame, cume: pl.DataFrame, rel
         "latest_cpi_month": p.notes["latest_cpi_month"],
         "deltas_after_latest_cpi": int(t["cpi_carried"].sum()),
         "gross_after_latest_cpi": int(t.filter(pl.col("cpi_carried"))["amount"].sum() or 0),
+        "deltas_at_interpolated_cpi": int(t["cpi_interpolated"].sum()),
+        "gross_at_interpolated_cpi": int(t.filter(pl.col("cpi_interpolated"))["amount"].sum() or 0),
         "ticket_years": [min(tickets["year"]), max(tickets["year"])] if tickets.height else None,
         "ticket_years_reported": len(reported),
         "ticket_years_interpolated": interpolated,

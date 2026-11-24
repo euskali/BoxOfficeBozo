@@ -16,6 +16,10 @@ months flow in with the weekly deploy; older answers to it are deleted once a
 newer one is cached. If this week's request fails, the newest cached answer is
 used and the report says so.
 
+A month BLS has no index for (October 2025: "Data unavailable due to the 2025
+lapse in appropriations") is interpolated between its neighbours at build time
+and flagged ``is_interpolated``, so every month has a value to price with.
+
 FRED is deliberately not used: its terms of use bar scraping and caching FRED
 content, and its API needs a registered key.
 """
@@ -38,7 +42,7 @@ API = "https://api.bls.gov/publicAPI/v1/timeseries/data/"
 FIRST_YEAR = 1913
 WINDOW_YEARS = 10  # v1's most per request
 BASE = "1982-84=100"  # the index's own reference period
-SCHEMA = {"month": pl.Date, "cpi": pl.Float64}
+SCHEMA = {"month": pl.Date, "cpi": pl.Float64, "is_interpolated": pl.Boolean}
 REPORT = "cpi_report.json"
 MONTH_RE = re.compile(r"M(0[1-9]|1[0-2])")  # M13 is the annual average
 
@@ -89,18 +93,48 @@ def validate(raw: bytes) -> None:
         raise ValueError(f"answer is for series {s.get('seriesID')}, not {SERIES}")
 
 
-def parse(raw: bytes) -> list[tuple[date, float]]:
-    """(month, index) for every monthly value in an answer."""
-    out = []
+def parse(raw: bytes) -> tuple[list[tuple[date, float]], dict[date, str]]:
+    """(month, index) for every monthly value in an answer, and the months listed without one
+    (BLS gives "-" and a footnote saying why)."""
+    out, unavailable = [], {}
     for row in _series(json.loads(raw)).get("data") or []:
         m = MONTH_RE.fullmatch(row.get("period", ""))
         if not m:
             continue
         try:
-            out.append((date(int(row["year"]), int(m.group(1)), 1), float(row["value"])))
+            month = date(int(row["year"]), int(m.group(1)), 1)
         except (KeyError, TypeError, ValueError):
             continue
-    return out
+        try:
+            out.append((month, float(row["value"])))
+        except (KeyError, TypeError, ValueError):
+            notes = [f.get("text") for f in row.get("footnotes") or [] if isinstance(f, dict) and f.get("text")]
+            unavailable[month] = "; ".join(notes) or f"no value ({row.get('value')!r})"
+    return out, unavailable
+
+
+def _next_month(m: date) -> date:
+    return date(m.year + m.month // 12, m.month % 12 + 1, 1)
+
+
+def series(values: dict[date, float]) -> pl.DataFrame:
+    """Every month from the first to the last, a month without an index interpolated linearly
+    between the published months around it (rounded to BLS's three decimals) and flagged."""
+    if not values:
+        return pl.DataFrame(schema=SCHEMA)
+    known = sorted(values)
+    rows, m, i = [], known[0], 0
+    while m <= known[-1]:
+        if m in values:
+            rows.append((m, values[m], False))
+            i += 1
+        else:
+            before, after = known[i - 1], known[i]
+            span = (after.year - before.year) * 12 + after.month - before.month
+            step = (m.year - before.year) * 12 + m.month - before.month
+            rows.append((m, round(values[before] + (values[after] - values[before]) * step / span, 3), True))
+        m = _next_month(m)
+    return pl.DataFrame(rows, schema=SCHEMA, orient="row")
 
 
 @dataclass(frozen=True)
@@ -188,10 +222,14 @@ def ingest(fetcher: Fetcher, today: date, log=print) -> Result:
             raise FetchDisabledError(f"BLS CPI for {what} is not cached in data/raw/")
         raise FetchError(f"BLS CPI for {what} could not be fetched ({stopped})")
     values: dict[date, float] = {}
+    unavailable: dict[date, str] = {}
     for w in wanted:
-        for month, v in parse(chosen[w].path.read_bytes()):
-            values[month] = v
-    table = pl.DataFrame({"month": sorted(values), "cpi": [values[m] for m in sorted(values)]}, schema=SCHEMA)
+        got, gaps = parse(chosen[w].path.read_bytes())
+        values.update(got)
+        unavailable.update(gaps)
+    table = series(values)
+    interpolated = [{"month": m.isoformat()[:7], "cpi": v, "note": unavailable.get(m, "not in BLS's answer")}
+                    for m, v, flag in table.iter_rows() if flag]
     tag = week_tag(today)
     stale = [f"{w[0]}-{w[1]} ({e.tag})" for w, e in chosen.items() if e.tag and e.tag != tag]
     pruned = prune(entries, chosen) if not stopped else 0
@@ -207,6 +245,7 @@ def ingest(fetcher: Fetcher, today: date, log=print) -> Result:
         "fetched": fetched,
         "fetch": {"stopped": stopped},
         "stale_windows": stale,
+        "interpolated_months": interpolated,
         "pruned_cache_entries": pruned,
         "network_requests": fetcher.network_requests,
     }

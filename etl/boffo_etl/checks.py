@@ -608,6 +608,11 @@ def check_cpi_report() -> list[Issue]:
     if r["stale_windows"]:
         issues.append(Issue("warning", CPI_REPORT, 0, "CPI answers from an earlier week are used for "
                             f"{', '.join(r['stale_windows'])} (this week's request: {r['fetch']['stopped']})"))
+    if r.get("interpolated_months"):
+        months = r["interpolated_months"]
+        issues.append(Issue("warning", CPI_REPORT, 0, f"BLS published no index for {len(months)} months, "
+                            "interpolated between the months around them and flagged is_interpolated, "
+                            + _examples(months, lambda x: f"{x['month']} ({x['note']}): {x['cpi']}")))
     if r["latest_month"] and r.get("built_on"):
         lag = date.fromisoformat(r["built_on"]) - date.fromisoformat(r["latest_month"])
         if lag.days > CPI_LAG_DAYS:
@@ -624,8 +629,8 @@ def check_cpi() -> list[Issue]:
     con = _connect()
     _view(con, "c", path)
     first, last, n, distinct, bad = con.execute(
-        "SELECT min(month), max(month), count(*), count(DISTINCT month), count(*) FILTER (cpi IS NULL OR cpi <= 0) "
-        "FROM c").fetchone()
+        "SELECT min(month), max(month), count(*), count(DISTINCT month), "
+        "count(*) FILTER (cpi IS NULL OR cpi <= 0 OR is_interpolated IS NULL) FROM c").fetchone()
     con.close()
     if n == 0:
         return [Issue("error", name, 0, "the CPI table is empty")]
@@ -638,7 +643,7 @@ def check_cpi() -> list[Issue]:
     if distinct != expected:
         issues.append(Issue("error", name, 0, f"{expected - distinct} months are missing between {first} and {last}"))
     if bad:
-        issues.append(Issue("error", name, 0, f"{bad} months have no positive index"))
+        issues.append(Issue("error", name, 0, f"{bad} months have no positive index or no is_interpolated flag"))
     return issues
 
 
@@ -695,6 +700,9 @@ def check_cume_report() -> list[Issue]:
         issues.append(Issue("warning", name, 0, f"{r['deltas_after_latest_cpi']} weekly changes "
                             f"(${r['gross_after_latest_cpi']:,}) are after the latest CPI month "
                             f"({(r['latest_cpi_month'] or '')[:7]}) and use its index until BLS publishes theirs"))
+    if r.get("deltas_at_interpolated_cpi"):
+        issues.append(Issue("warning", name, 0, f"{r['deltas_at_interpolated_cpi']} weekly changes "
+                            f"(${r['gross_at_interpolated_cpi']:,}) are priced at an interpolated CPI month"))
     added = [o for o in r["overlaps"] if o["excess"]]
     if added:
         issues.append(Issue("warning", name, 0, f"{len(added)} late runs or carry-ins brought earlier money that no "
