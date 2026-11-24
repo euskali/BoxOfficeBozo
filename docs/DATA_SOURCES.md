@@ -12,8 +12,8 @@ BoxOfficeBozo is a **non-commercial hobby project** with a **public repo**. The 
 | **Wayback Machine** (CDX API) | Archived Box Office Mojo weekend chart pages (`/weekend/YYYYWnn/`, plus old-style chart URLs) and release pages (for IMDb `tt` ids) | 2017 → present | Internet Archive terms. No published rate limit; ~15 req/min is the unofficial ceiling, and we stay at ≤12/min. Prefix/wildcard CDX queries on this site are refused (HTTP 503), so we ask one exact URL per weekend | ✅ |
 | **Common Crawl** (index.commoncrawl.org + WARC byte ranges) | The same Box Office Mojo pages, as a fallback for weekends Wayback lacks | ~2013 → present | Common Crawl terms: crawled content "may be subject to separate terms" of its owners. Don't overload the index server (it often times out; we cap index queries per run) | ✅ |
 | **Wikidata** (CC0) | Films, English labels, IMDb ID (P345), legacy Box Office Mojo film ID (P1237), directors (P57), cast (P161) and voice actors (P725) with the P1545 ordinal when present, people's names and IMDb IDs, publication date (P577), genre (P136), duration (P2047) | ~14.3k films carry P1237, nearly all with P345 too; ~337k film items have P345 and P577 (Nov 2026) | CC0, no attribution required (we credit anyway). Queried through **QLever** (`qlever.dev`, the University of Freiburg's public SPARQL endpoint over the full Wikidata graph), one request at a time, ≥5 s apart, with our User-Agent; it stops queries at 30 s. The Wikidata Query Service (60 s timeout) couldn't answer a year of films in time, so it isn't used. One snapshot per month (about 120 queries), cached in `data/raw/`. Credits come from the **Wikidata API** (`www.wikidata.org/w/api.php`, `wbgetentities`, 50 films a request), the only source of statement order, which stands in for billing; only the credit statements are cached. About 324 requests a month, ≥5 s apart | ✅ |
-| **BLS CPI-U** (`CUUR0000SA0`) | Monthly CPI, U.S. city average, not seasonally adjusted | 1913 → present | Public domain; cite BLS | ✅ |
-| **Average ticket price history** | Annual US average ticket price | 1910s → present, with gaps | Facts with citations, in a manual CSV (candidate sources below) | ✅ (manual CSV) |
+| **BLS CPI-U** (`CUUR0000SA0`) | Monthly CPI, U.S. city average, not seasonally adjusted | 1913 → present | Public domain; cite BLS. Read from the **BLS Public Data API v1** (`api.bls.gov`, no key; up to 10 years a request, POST only, 25 requests a day): twelve ten-year windows the first time, then the current window once a week | ✅ |
+| **Average ticket price history** | Annual US average ticket price | 1948, 1954, 1958, 1963, 1967, 1969, 1971, 1974–2019 and 2022 sourced (Nov 2026); other years interpolated or carried forward at build time, flagged | Facts with citations, in a manual CSV (sources below) | ✅ (manual CSV) |
 
 ## Not used, and why
 
@@ -26,12 +26,13 @@ BoxOfficeBozo is a **non-commercial hobby project** with a **public repo**. The 
 | **IMDb + Box Office Mojo on AWS Data Exchange** | Enterprise contract | ⛔ |
 | **Rentrak** (formerly Comscore Movies; sold to Advaya Capital in May 2026) | Industry source of truth, studio-only | ⛔ |
 
-## Ticket price candidate sources (for `data/manual/ticket_prices.csv`)
+## Ticket price sources (for `data/manual/ticket_prices.csv`)
 Cite each row to one of these, with the table and page. Don't transcribe Box Office Mojo's own table; go to its primary sources.
-- **Cinema United** (formerly NATO): the old `natoonline.org/data/ticket-price/` page now redirects to cinemaunited.org and 404s (Nov 2026). Find the current page or report, and cite the archived copy of the old table.
+- **NATO (now Cinema United)**, "Annual Average U.S. Ticket Price": the old `natoonline.org/data/ticket-price/` page now redirects to cinemaunited.org and 404s (Nov 2026). The CSV cites its Wayback Machine capture of 18 Jan 2021, which lists 1948, 1954, 1958, 1963, 1967, 1971 and every year 1974–2019 (and 1969 in a note). Its footnote: figures before 1989 are based on the CPI-W index, later ones on NATO's survey.
+- **The Cinema Foundation** (NATO's research arm), *State of the Cinema Industry*, March 2023: $10.53 for 2022, and no figures for 2020 or 2021. Cited through Fortune's report of it (10 Mar 2023). Cinema United's later reports (through the Dec 2025 "Strength of Theatrical Exhibition" update) give no annual average, so 2023 on carries 2022's price forward until a sourced figure is found.
 - **Historical Statistics of the United States, Millennial Edition**, Table Dh388–391, "Motion picture attendance, box office receipts, and admission prices: 1922–1998" (Cambridge University Press).
 - **Period trade sources on Lantern** (lantern.mediahist.org), e.g. *Evidence Study No. 25 of the Motion Picture Industry* (1935) for 1929–1934, and *Film Daily Year Book* volumes.
-- Known gaps: the 1910s and the 1960s–80s still need sources. Leave them out of the CSV and let the build interpolate (flagged) until they're found.
+- Known gaps: before 1948, the years between NATO's early rows (1949–53, 1955–57, 1959–62, 1964–66, 1968, 1970, 1972–73), 2020–21, and 2023 on. Leave them out of the CSV and let the build interpolate or carry forward (flagged) until they're found. Pre-1982 baselines of films released before 1948 need the earlier years to have admissions.
 
 ## Helpful extras (check terms before using any)
 

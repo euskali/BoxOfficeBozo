@@ -13,10 +13,10 @@ from typing import Callable
 
 import polars as pl
 
-from . import match, paths
+from . import cume, match, paths
 from .fetch import FetchDisabledError
 from .manual import validate_manual_dir
-from .sources import bom_weekend, credits, stat695, wikidata
+from .sources import bom_weekend, cpi, credits, stat695, wikidata
 
 REQUIRE_DATA_FLAG = "BOFFO_REQUIRE_DATA"
 # Fetching stops this long after the build starts (the data-build job times out at 330 min).
@@ -30,7 +30,7 @@ STEPS: list[tuple[str, str, Callable[[], object] | None]] = [
     ("stat695", "M1", stat695.run),
     ("bom_weekend", "M2", bom_weekend.run),
     ("wikidata", "M3", wikidata.run),
-    ("cpi", "M5", None),
+    ("cpi", "M5", cpi.run),
 ]
 
 # Shipped tables and the per-source parts in data/build/ they are combined from.
@@ -167,6 +167,16 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"step credits: FAILED, {REQUIRE_DATA_FLAG}=1 and {exc}", file=sys.stderr)
                 return 1
             print("step credits: skipped, its raw input is not cached in data/raw/ (data is fetched in CI)")
+        # M5 prices every period's gross in CPI dollars and admissions: after matching, so the
+        # title totals are final, and with the cpi step's table.
+        print("step cume: running")
+        try:
+            tables += [_table_entry(p) for p in cume.run()]
+        except FetchDisabledError as exc:
+            if require:
+                print(f"step cume: FAILED, {REQUIRE_DATA_FLAG}=1 and {exc}", file=sys.stderr)
+                return 1
+            print(f"step cume: skipped, {exc}")
     for t in tables:
         print(f"published {t['file']}: {t['rows']} rows")
     write_manifest(tables)

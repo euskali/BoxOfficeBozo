@@ -29,8 +29,9 @@ etl/                      Python 3.12 uv project
       wikidata.py         films, IMDb IDs (P345), legacy Mojo IDs (P1237); CC0, via QLever
       credits.py          directors (P57), cast (P161) and voice actors (P725) of the matched films, in statement order
                           (Wikidata API), and the people's names and IMDb IDs (QLever); runs after match.py
-      cpi.py              CPI-U monthly, BLS series CUUR0000SA0 (public domain)
+      cpi.py              CPI-U monthly, BLS series CUUR0000SA0 (public domain), from the BLS Public Data API v1
     match.py              release → title matching via Wikidata + overrides; builds titles.parquet
+    cume.py               M5: each period's gross in CPI dollars and admissions; builds title_cume.parquet
     build.py              orchestrates; writes data/build/*.parquet and site/public/data/*.parquet
     checks.py             data-quality checks (also run in CI)
   tests/                  pytest (offline; synthetic fixtures only)
@@ -79,14 +80,15 @@ The repo is public, so it holds **code, docs, and cited manual CSVs only**. No s
 `weekend_end` (date, Sunday; the chart's own end date, and `checks.py` flags any that aren't Sundays) · `release_id` · `title_id` · `rank` · `weekend_gross` · `theaters` · `total_gross` (cumulative for that release) · `weeks` (weekends in release, as charted) · `source` (`stat695` | `wayback` | `commoncrawl`) · `capture_url` (the archive capture the row came from; null for stat695) · `is_estimate`
 
 **`title_cume.parquet`**: precomputed per title per weekend where it changed (this drives the time machine)
-`title_id` · `as_of` (weekend_end) · `cume_nominal` · `cume_cpi` (in constant dollars of a fixed base month; see Inflation) · `cume_admissions`
+`title_id` · `as_of` (weekend_end) · `cume_nominal` · `cume_cpi` (in constant 1982–84 dollars, CPI-U's own reference period, index 100: dollars of month M are `cume_cpi × CPI(M) / 100`) · `cume_admissions` · `baseline` (the title's totals include a pre-1982 baseline)
 - `cume_nominal` = baseline + sum over releases of the latest `total_gross` ≤ as_of.
 - Built from period deltas: for each release, `delta = total_gross - previous total_gross`. Each delta is deflated by the CPI of its weekend month and divided by the average ticket price of its year. Then take cumulative sums.
 - Add one row per title at its first appearance. Pre-1982 baseline titles get a row at `1982-01-01` carrying the baseline.
+- A late run (M3) or a baseline title's 1982 carry-in counts, on its first weekend, only that weekend's gross plus whatever of its earlier total the title's other releases and baseline don't hold. That remainder is dated to the run's opening (or 1982-01-01) and priced there. See `cume.py`.
 
 **`people.parquet`** `person_id` (Wikidata QID) · `imdb_id` (nconst from Wikidata P345, nullable) · `name` (Wikidata English label)
 **`credits.parquet`** `title_id` · `person_id` · `role` (`director` | `actor`) · `billing` (int, 1 = top billed: actors with a P1545 series-ordinal qualifier first, in ordinal order, then the rest in Wikidata statement order; null for directors) · `billing_source` (`p1545` | `statement_order`, where that actor's place came from; null for directors)
-**`cpi.parquet`** `month` · `cpi`  **`ticket_prices.parquet`** `year` · `avg_price` · `source` · `is_interpolated`
+**`cpi.parquet`** `month` (first of the month) · `cpi` (CPI-U, 1982–84 = 100)  **`ticket_prices.parquet`** `year` · `avg_price` · `source` (the citation; "interpolated between Y1 and Y2" or "carried forward from Y" otherwise) · `is_interpolated` (true for every year that isn't a sourced figure)
 
 Credits and titles come from **Wikidata (CC0)**, not the IMDb datasets. IMDb's non-commercial terms say the data "must not be altered/republished/resold/repurposed to create any kind of online/offline database of movie information", which a public site would do. IMDb IDs appear only as identifiers, read from Wikidata P345.
 
@@ -180,6 +182,13 @@ Credits and titles come from **Wikidata (CC0)**, not the IMDb datasets. IMDb's n
 - Build `title_cume` with three measures (see the data model). Store `cume_cpi` in constant base-month dollars. The site rescales to "dollars of the selected date" or "today's dollars" with a toggle.
 - Baseline films: CPI and admissions from their release year (approximation; flag `baseline=true`).
 - **Accept:** unit tests cover delta deflation on a hand-computed 3-weekend example. Admissions for a known film are within ±5% of a published estimate (document which one).
+- *Learned (Nov 2026):*
+  - BLS's v1 API answers a year range only to a POST (a GET returns the last three years), so `fetch.py` can POST now: the body is part of the cache key, and a `#fragment` on the URL tags the key without being sent. The series is asked in ten-year windows from 1913 (12 requests the first time). A window is final once December's index is surely out (two years old, or one year old and past February) and is cached for good; the current window is asked again each ISO week, and older answers to it are deleted. If a week's request fails, the newest cached answer is used and `checks.py` warns.
+  - `cume_cpi` is kept in CPI-U's own reference-period dollars (1982–84 = 100) rather than a chosen base month, so it doesn't change when a new month is published. Weekends after the latest published month use the latest index (`checks.py` counts them).
+  - Ticket prices: NATO's table (archived Jan 2021) gives 1974–2019 and seven earlier years; the Cinema Foundation gives $10.53 for 2022 and says there were no figures for 2020–21. Nothing later is published as an annual average yet, so 2023 on carries 2022 forward, which overstates admissions for those years a little if prices kept rising. 12.9% of charted gross is priced at an interpolated or carried-forward price.
+  - The 46 late runs repeat $1.90B that the titles' other releases already hold; counting them in full would have nearly doubled Shrek 2, Shrek, The Grinch and Kung Fu Panda. They add $452M of earlier money no other release holds, mostly films older than 1982 with no baseline yet (Jaws $254M from 1975, The Muppet Movie $65M from 1979) and long IMAX runs first charted a year or more in. Pre-1982 baselines will cover the old ones.
+  - Seven releases charted with weekend grosses but never a total (Venom and Personal Best in 1982, say). They add nothing, and `checks.py` lists them.
+  - Accept: Box Office Mojo's inflation-adjusted chart, archived 14 Jun 2018, adjusts to a $9.16 ticket. Its admissions (adjusted gross ÷ $9.16) against ours as of 2018-06-10: Titanic 135.55M vs 135.83M (+0.2%), Avatar 97.31M vs 97.79M (+0.5%), The Force Awakens 108.12M vs 109.91M (+1.7%). E.T. comes out 5.6% low because the 1982–83 weekly charts stop before its run ended ($419.5M of $435.1M), so it isn't used. `test_data_m5.py` checks these in every deploy.
 
 ### M6 — Ranking engine (shared SQL)
 - Put the queries in `site/src/queries/*.sql` and run the identical SQL in Python tests against the same Parquet.
