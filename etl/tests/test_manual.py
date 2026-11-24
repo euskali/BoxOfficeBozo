@@ -94,6 +94,25 @@ def test_baseline_pk_falls_back_to_title_year(repo):
     assert any("duplicate" in e.message for e in errors(validate_manual_dir(repo / "data" / "manual")))
 
 
+def test_admissions_estimate_rules(repo):
+    good = "Some Film,tt0000123,178119600,2018-12-22,Cite,https://example.org,"
+    write(repo, "admissions_estimates.csv", good)
+    assert validate_manual_dir(repo / "data" / "manual") == []
+    row = load_manual("admissions_estimates.csv", repo / "data" / "manual")[0]
+    assert (row["admissions"], str(row["as_of"])) == (178119600, "2018-12-22")
+    for bad in [
+        good.replace(",178119600,", ",0,"),
+        good.replace(",178119600,", ",1.5e8,"),
+        good.replace("2018-12-22", "22 Dec 2018"),
+        good.replace("tt0000123", "bb_some_film"),
+        good.replace(",Cite,", ",TODO,"),
+    ]:
+        write(repo, "admissions_estimates.csv", bad)
+        assert errors(validate_manual_dir(repo / "data" / "manual")), bad
+    write(repo, "admissions_estimates.csv", good, good)
+    assert any("duplicate" in e.message for e in errors(validate_manual_dir(repo / "data" / "manual")))
+
+
 def test_id_override_and_groups(repo):
     write(repo, "id_overrides.csv", "ongoldenpond,tt0082846,,,Cite,,", "x,bb_foo_1,,,Cite,,")
     write(repo, "title_groups.csv", "k1,tt1234567,Label,Cite,,")

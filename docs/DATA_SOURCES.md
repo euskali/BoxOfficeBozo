@@ -39,7 +39,7 @@ Cite each row to one of these, with the table and page. Don't transcribe Box Off
 | Source | What | Notes | Status |
 |---|---|---|---|
 | **heike/classdata `mojo`** (R pkg, GitHub) | Mojo weekend charts scraped Sep 2018 | 2013–2018, about 31.7k rows. Could cross-check 2017–2018. Check its license first | 🔜 |
-| **Wayback Machine, old Mojo** | `boxofficemojo.com/people/…`, `/alltime/adjusted.htm`, `/movies/?id=…` (archived) | Validate person rollups and adjusted rankings against what Mojo showed | 🔜 |
+| **Wayback Machine, old Mojo** | `boxofficemojo.com/people/…`, `/alltime/adjusted.htm`, `/movies/?id=…` (archived) | Cited by hand for pre-1982 baselines and admissions estimates (see below). Person rollups could be validated against `/people/` pages later | ✅ (manual CSV) |
 | **R `boxoffice` package** (CRAN) | Daily scraper for Mojo / The Numbers | Reference implementation only. Its live-scraping approach is not allowed here | 📚 |
 | **TMDB API** | Lifetime worldwide revenue, budget, posters | Free non-commercial with attribution; 6-month cache limit. Re-check the terms for a public site | 🔜 |
 | **Wikidata** (P2142 box office) | Lifetime grosses with qualifiers | CC0, inconsistent coverage | 🔜 |
@@ -55,6 +55,11 @@ Cite each row to one of these, with the table and page. Don't transcribe Box Off
 | **Books** 📚 | Finler, *The Hollywood Story* (2003) and *All-Time Box-Office Hits* (1985); Steinberg, *Reel Facts* (1982); Sackett, *Hollywood Reporter Book of Box Office Hits* (1996); *Art Murphy's Box Office Register* (annual from 1984) | Library / Internet Archive lending. Extract figures manually with page citations |
 
 **Big caveat for old data:** until the 1970s–80s, trades reported **distributor rentals**, not box office grosses. Store them with `is_rental=true` and never mix them silently with grosses.
+
+### Baseline sources in use (for `pre1982_baseline.csv` and `admissions_estimates.csv`)
+- **Box Office Mojo release summaries, archived** (`/movies/?page=releases&id=…` on the Wayback Machine): one row per release with its date and gross. A film's pre-1982 baseline is the row (or rows) dated before 1982 when the next listed release is in 1982 or later, so the row covers every earlier run. Cite the capture URL and quote the rows in `notes`. Gone with the Wind (1939 row: every run before the 1989 re-issue) and Star Wars (1977 row: every run before the August 1982 re-issue) so far.
+- **Box Office Mojo's all-time chart in estimated tickets, archived** (`/alltime/adjusted.htm?adjust_yr=1&p=.htm`, the chart's "Est. Tckts" adjuster; captured often from 2005 to 2018): lifetime estimated admissions per film, as of the capture date. These go in `admissions_estimates.csv` for baseline films whose pre-1982 money spans many re-issues, so the build doesn't have to price it all at the release year (see `cume.py`). Copy the figure as printed; the build subtracts what our charts count up to the capture date.
+- Grosses only, never rentals, from these pages. Rentals from the trades need `is_rental=true`.
 
 ## Etiquette for anything fetched
 - Fetch **only in CI** (`BOFFO_FETCH=1` in the `data-build` job). Locally the ETL is offline.

@@ -7,7 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "polars",
     "pyarrow",
-    "duckdb",
+    "duckdb==1.5.4",  # the engine @duckdb/duckdb-wasm bundles (site/src/queries/engine.json)
     "pyreadr",
     "httpx",
     "rapidfuzz",

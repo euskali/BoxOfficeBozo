@@ -28,6 +28,16 @@ get a row at 1982-01-01, priced at the release year's average CPI and ticket pri
 approximation; ``baseline`` is true on every row of such a title). Rentals stay rentals: the
 title's ``baseline_is_rental`` says so.
 
+That approximation fails for films whose pre-1982 money came from decades of re-issues.
+Gone with the Wind's $189.5M spans 1939 to the 1970s: at 1939's CPI it would be $4.6B in October
+2026 dollars, over twice what pricing by its estimated tickets gives, and there's no ticket price
+before 1948 to count its admissions by. So a baseline film can have a published estimate of its lifetime
+admissions as of some date (``data/manual/admissions_estimates.csv``). Its baseline admissions
+are that estimate less what the title's charts here count up to that date, so the title's
+lifetime admissions on that date equal the estimate. Its CPI dollars use the annual CPI of the
+first year, from its release to 1981, whose average ticket price reaches the baseline's gross per
+admission (the year its average ticket was sold, as it were). ``cume_report.json`` lists each.
+
 A month BLS has no index for is interpolated in ``cpi.parquet`` (flagged ``is_interpolated``).
 Months after the latest published CPI use the latest index, and years after the latest sourced
 ticket price use that price; ``cume_report.json`` counts both, and the ticket price table flags
@@ -214,6 +224,59 @@ def _by_year(monthly: dict[date, float]) -> dict[int, list[float]]:
     return out
 
 
+def apply_estimates(priced: pl.DataFrame, estimates: list[dict], cpi: pl.DataFrame,
+                    prices: pl.DataFrame) -> tuple[pl.DataFrame, list[dict]]:
+    """Price each baseline that has a published lifetime admissions estimate (see the module
+    docstring). Returns the table and one report entry per estimate; an entry with a
+    ``problem`` was not applied, and its baseline keeps its release-year pricing."""
+    monthly = dict(zip(cpi["month"].to_list(), cpi["cpi"].to_list()))
+    annual = {y: sum(v) / len(v) for y, v in _by_year(monthly).items()}
+    tickets = dict(zip(prices["year"].to_list(), prices["avg_price"].to_list()))
+    adm = priced["admissions"].to_list()
+    cpi_dollars = priced["cpi_dollars"].to_list()
+    est = priced["price_estimated"].to_list()
+    rows = priced.select("title_id", "as_of", "amount", "priced_on", "kind").to_dicts()
+    by_title: dict[str, list[int]] = defaultdict(list)
+    for i, r in enumerate(rows):
+        by_title[r["title_id"]].append(i)
+    report = []
+    for e in sorted(estimates, key=lambda e: e["title_id"]):
+        tid, published, on = e["title_id"], int(e["admissions"]), e["as_of"]
+        entry = {"title_id": tid, "title": e.get("title"), "published": published, "as_of": on.isoformat()}
+        report.append(entry)
+        base = [i for i in by_title.get(tid, []) if rows[i]["kind"] == BASELINE]
+        if not base:
+            entry["problem"] = "the title has no pre-1982 baseline"
+            continue
+        charted = [i for i in by_title[tid] if rows[i]["kind"] != BASELINE and rows[i]["as_of"] <= on]
+        if any(adm[i] is None for i in charted):
+            entry["problem"] = "some of the title's charted gross has no admissions"
+            continue
+        ours = sum(adm[i] for i in charted)
+        b = base[0]
+        gross, released = rows[b]["amount"], rows[b]["priced_on"].year
+        admissions = published - ours
+        entry["charted_admissions"] = round(ours)
+        if admissions <= 0:
+            entry["problem"] = f"the charts already count {round(ours):,} admissions by {on}"
+            continue
+        per_ticket = gross / admissions
+        years = [y for y in range(released, BASELINE_DATE.year) if y in tickets and y in annual]
+        if not years:
+            entry["problem"] = f"no ticket price or CPI for any year from {released} to {BASELINE_DATE.year - 1}"
+            continue
+        cpi_year = next((y for y in years if tickets[y] >= per_ticket), years[-1])
+        adm[b] = float(admissions)
+        cpi_dollars[b] = gross * CPI_BASE / annual[cpi_year]
+        est[b] = False
+        entry |= {"baseline_gross": gross, "baseline_admissions": round(admissions),
+                  "gross_per_admission": round(per_ticket, 3), "cpi_year": cpi_year}
+    table = priced.with_columns(pl.Series("admissions", adm, dtype=pl.Float64),
+                                pl.Series("cpi_dollars", cpi_dollars, dtype=pl.Float64),
+                                pl.Series("price_estimated", est, dtype=pl.Boolean))
+    return table, report
+
+
 # --- cumulating --------------------------------------------------------------------
 
 def title_cume(priced: pl.DataFrame) -> pl.DataFrame:
@@ -252,13 +315,14 @@ class Built:
 
 
 def build(snapshots: pl.DataFrame, releases: pl.DataFrame, titles: pl.DataFrame, cpi: pl.DataFrame,
-          ticket_rows: list[dict]) -> Built:
+          ticket_rows: list[dict], estimates: list[dict] | None = None) -> Built:
     d = deltas(snapshots, titles)
     through = max([y.year for y in d.table["priced_on"].to_list()] + [cpi["month"].max().year if cpi.height else 0])
     tickets = ticket_prices(ticket_rows, through)
     p = price(d.table, cpi, tickets)
+    p.table, applied = apply_estimates(p.table, estimates or [], cpi, tickets)
     cume = title_cume(p.table)
-    return Built(cpi, tickets, cume, _report(d, p, tickets, cume, releases, titles))
+    return Built(cpi, tickets, cume, _report(d, p, tickets, cume, releases, titles) | {"admissions_estimates": applied})
 
 
 def _report(d: Deltas, p: Priced, tickets: pl.DataFrame, cume: pl.DataFrame, releases: pl.DataFrame,
@@ -330,7 +394,8 @@ def run(today: date | None = None) -> list[Path]:
         raise FetchDisabledError("data/build/cpi.parquet is missing (the cpi step fetches BLS CPI in CI)")
     built = build(pl.read_parquet(tables["snapshots"]), pl.read_parquet(tables["releases"]),
                   pl.read_parquet(tables["titles"]), pl.read_parquet(cpi_path),
-                  load_manual("ticket_prices.csv", paths.data_manual()))
+                  load_manual("ticket_prices.csv", paths.data_manual()),
+                  load_manual("admissions_estimates.csv", paths.data_manual()))
     out = [site_dir / "cpi.parquet", site_dir / "ticket_prices.parquet", site_dir / "title_cume.parquet"]
     built.cpi.write_parquet(out[0])
     built.tickets.write_parquet(out[1])

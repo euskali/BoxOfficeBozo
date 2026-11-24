@@ -1,0 +1,5 @@
+{
+  "duckdb-wasm": "1.33.1-dev57.0",
+  "engine": "v1.5.4",
+  "note": "SELECT version() in the pinned @duckdb/duckdb-wasm. etl/pyproject.toml pins the Python duckdb package to the same engine; queries.test.ts and etl/tests/test_queries.py check both."
+}

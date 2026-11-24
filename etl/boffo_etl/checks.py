@@ -720,6 +720,16 @@ def check_cume_report() -> list[Issue]:
         if r[key]:
             issues.append(Issue("warning", name, 0, f"{r[key]} titles have no {what}, "
                                 + _examples([(t,) for t in r[key + "_examples"]], lambda x: x[0])))
+    estimates = r.get("admissions_estimates", [])
+    for e in estimates:
+        if e.get("problem"):
+            issues.append(Issue("error", name, 0, f"the admissions estimate for {e['title_id']} {e['title']!r} "
+                                f"(admissions_estimates.csv) can't price its baseline: {e['problem']}"))
+    applied = [e for e in estimates if not e.get("problem")]
+    if applied:
+        print("  baselines priced by a published admissions estimate: " + "; ".join(
+            f"{e['title']} {e['baseline_admissions']:,} before 1982 (${e['gross_per_admission']:.2f} a ticket, "
+            f"{e['cpi_year']} CPI)" for e in applied))
     return issues
 
 

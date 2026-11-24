@@ -457,6 +457,23 @@ def test_m5_table_errors(repo, capsys):
         assert message in out, message
 
 
+def test_m6_admissions_estimates_are_listed_and_failures_are_errors(repo, capsys):
+    ok = {"title_id": "tt0076759", "title": "Star Wars", "published": 178_119_600, "as_of": "2018-12-22",
+          "charted_admissions": 35_372_170, "baseline_admissions": 142_747_430, "gross_per_admission": 2.152,
+          "cpi_year": 1977, "baseline_gross": 307_263_857}
+    write_m5(repo, report={"admissions_estimates": [ok]})
+    code, out = run(capsys)
+    assert code == 0, out
+    assert "Star Wars 142,747,430 before 1982 ($2.15 a ticket, 1977 CPI)" in out
+    bad = {"title_id": "tt1", "title": "Some Film", "published": 5, "as_of": "2018-12-22",
+           "problem": "the title has no pre-1982 baseline"}
+    write_m5(repo, report={"admissions_estimates": [ok, bad]})
+    code, out = run(capsys)
+    assert code == 1
+    assert "the admissions estimate for tt1 'Some Film' (admissions_estimates.csv) can't price its baseline: " \
+           "the title has no pre-1982 baseline" in out
+
+
 def test_m5_report_warnings(repo, capsys):
     write_m5(repo, report={"ticket_years_interpolated": [2020, 2021], "deltas_after_latest_cpi": 2,
                            "gross_after_latest_cpi": 1500, "titles_without_admissions": 1,

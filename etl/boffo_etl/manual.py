@@ -130,6 +130,18 @@ def _baseline_row(row: Row) -> str | None:
     return None
 
 
+def _estimate_row(row: Row) -> str | None:
+    err = _int_in(row, "admissions", 1, None)
+    if err:
+        return err
+    raw = row["as_of"].strip()
+    try:
+        date.fromisoformat(raw)
+    except ValueError:
+        return f"as_of must be an ISO date (YYYY-MM-DD), got {raw!r}"
+    return None
+
+
 def _baseline_pk(row: Row) -> tuple:
     qid = row.get("wikidata_qid", "").strip()
     if qid:
@@ -163,6 +175,23 @@ SCHEMAS: dict[str, Schema] = {
                 _baseline_row,
                 _pattern("wikidata_qid", QID_RE),
                 _pattern("title_id", TT_RE),
+                _check_source,
+                _check_source_url,
+            ),
+        ),
+        Schema(
+            # A published estimate of a baseline film's lifetime domestic admissions (tickets
+            # sold) as of a date. cume.py prices the film's pre-1982 baseline with it.
+            "admissions_estimates.csv",
+            ("title", "title_id", "admissions", "as_of", "source", "source_url", "notes"),
+            ("title", "title_id", "admissions", "as_of", "source"),
+            {"title": "str", "title_id": "str", "admissions": "int", "as_of": "date",
+             "source": "str", "source_url": "str", "notes": "str"},
+            lambda r: (r["title_id"].strip(),),
+            "title_id",
+            (
+                _estimate_row,
+                _pattern("title_id", TT_RE, optional=False),
                 _check_source,
                 _check_source_url,
             ),

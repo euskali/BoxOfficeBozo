@@ -40,6 +40,7 @@ Box Office Mojo and IMDb are trademarks of IMDb.com, Inc. Other trademarks belon
 - **What:** annual average US ticket prices and lifetime totals for major pre-1982 films, transcribed from published sources. Each row in `data/manual/` cites its source (publication with date and page, or a URL).
 - **Ticket prices:** the National Association of Theatre Owners' (NATO, now Cinema United) table of annual average U.S. ticket prices, as archived by the Wayback Machine, and the Cinema Foundation's *State of the Cinema Industry* report (March 2023) for 2022. These are published facts; we don't reproduce the publications.
 - Years without a sourced ticket price are interpolated between sourced years (or, after the last one, carried forward) by the build, and flagged on the site.
+- **Pre-1982 totals:** grosses from Box Office Mojo's film release summaries, and lifetime estimated admissions from its all-time chart of estimated tickets, as archived by the Wayback Machine. We use the figures only, cited to the archived page; we don't reproduce the pages. Totals that include a pre-1982 baseline are flagged on the site.
 
 ## Our own calculations
 Inflation-adjusted dollars, estimated admissions, all-time ranks "as of" a date, and career totals are BoxOfficeBozo's own calculations from the sources above. They're estimates, they may contain errors, and they are not official figures from any source. The site's About page explains the method.
