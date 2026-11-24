@@ -20,7 +20,7 @@ Looks like 1999. Works like 2026.
 - [x] M2 Ingest 2017 → present
 - [x] M3 Identity matching
 - [x] M4 Credits & people
-- [ ] M5 Inflation & admissions
+- [x] M5 Inflation & admissions
 - [ ] M6 Ranking engine + golden tests
 - [ ] M7 Site
 - [ ] M8 Data notes & launch

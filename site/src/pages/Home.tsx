@@ -6,7 +6,7 @@ const MILESTONES = [
   { id: 'M2', name: 'Ingest 2017 → present', status: 'Done' },
   { id: 'M3', name: 'Identity matching', status: 'Done' },
   { id: 'M4', name: 'Credits & people', status: 'Done' },
-  { id: 'M5', name: 'Inflation & admissions', status: 'Coming soon' },
+  { id: 'M5', name: 'Inflation & admissions', status: 'Done' },
   { id: 'M6', name: 'Ranking engine', status: 'Coming soon' },
   { id: 'M7', name: 'Site', status: 'Coming soon' },
   { id: 'M8', name: 'Data notes & launch', status: 'Coming soon' },
