@@ -21,7 +21,7 @@ Looks like 1999. Works like 2026.
 - [x] M3 Identity matching
 - [x] M4 Credits & people
 - [x] M5 Inflation & admissions
-- [ ] M6 Ranking engine + golden tests
+- [x] M6 Ranking engine + golden tests
 - [ ] M7 Site
 - [ ] M8 Data notes & launch
 
