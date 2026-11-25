@@ -2,6 +2,7 @@ import PageHead from '../components/PageHead'
 import SectionBar from '../components/SectionBar'
 import TableBox from '../components/TableBox'
 import { TOP_BILLED } from '../queries'
+import { SOURCES } from '../sources'
 
 const REPO_URL = 'https://github.com/euskali/BoxOfficeBozo'
 
@@ -17,26 +18,60 @@ export const MILESTONES = [
   { id: 'M8', name: 'Data notes & launch', status: 'Coming soon' },
 ]
 
-const FAQ = `BOXOFFICEBOZO DATA NOTES
+/** The FAQ's widest line, so it fits a 375 px phone in the .notes box. */
+export const NOTES_WIDTH = 56
+
+/** Word-wrap `text` to NOTES_WIDTH: the first line starts with `first`, the rest with `rest`. */
+export function wrap(text: string, first: string, rest: string): string {
+  const lines: string[] = []
+  let line = first
+  let empty = true
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (!empty && line.length + 1 + word.length > NOTES_WIDTH) {
+      lines.push(line)
+      line = rest + word
+    } else {
+      line += (empty ? '' : ' ') + word
+    }
+    empty = false
+  }
+  lines.push(line)
+  return lines.join('\n')
+}
+
+const SOURCE_NOTES = SOURCES.map((s) => wrap(`${s.label}: ${s.gives} Terms: ${s.terms}.`, '   * ', '     ')).join('\n')
+
+export const FAQ = `BOXOFFICEBOZO DATA NOTES
 ========================
 
 Q: What is this?
-A: A free, non-commercial hobby site of domestic (US and
-   Canada) box office history. Pick any date since 1982
-   and see the all-time lists as they stood that day.
+A: A free, non-commercial hobby site of domestic box
+   office history. Pick any date since 1982 and see
+   the all-time lists as they stood that day.
 
-Q: Where do the numbers come from?
-A: * Weekend charts 1982-2016: the Purdue STAT 695
-     dataset, Box Office Mojo's charts as compiled in
-     March 2017 (an MIT-licensed R package).
-   * Weekend charts 2017 on: archived copies of Box
-     Office Mojo's weekend charts, from the Internet
-     Archive's Wayback Machine and Common Crawl. We never
-     fetch Box Office Mojo or IMDb themselves.
-   * Films, directors and cast: Wikidata (CC0).
-   * Inflation: the BLS consumer price index (CPI-U).
-   * Average ticket prices: NATO (now Cinema United) and
-     the Cinema Foundation, each row cited.
+Q: What does "domestic" mean?
+A: The United States and Canada together, as the
+   weekend charts count it. Worldwide grosses aren't
+   covered.
+
+Q: Where do the numbers come from, and on what terms?
+A: Nearly every box office figure is Box Office Mojo's,
+   read from copies of its charts. We never fetch Box
+   Office Mojo, IMDb or The Numbers themselves, and we
+   publish figures and our own sums, not their pages.
+   Every source the site uses:
+${SOURCE_NOTES}
+   The Data Notice (link below) sets out each one's
+   terms.
+
+Q: Are these final figures or estimates?
+A: Studios report a weekend's gross as an estimate on
+   Sunday and the actual figure on Monday. From 2017
+   we read an archived chart captured more than a week
+   after the weekend, when it shows actuals. Where the
+   archive only kept the Sunday estimate, the figure
+   is marked "e". The 1982-2016 charts are as Box
+   Office Mojo had them in March 2017.
 
 Q: What do the three measures mean?
 A: NOMINAL $     Gross in the dollars of the day.
@@ -47,32 +82,77 @@ A: NOMINAL $     Gross in the dollars of the day.
                  year's average ticket price. Years with
                  no published price are interpolated.
 
+Q: Why do CPI dollars and tickets rank films
+   differently?
+A: CPI-U follows consumer prices in general; tickets
+   follow what a cinema seat cost that year. Where the
+   two moved apart, the lists differ. Both are our own
+   estimates, not official figures.
+
 Q: Why is an older film missing, or so low?
 A: Our weekend charts begin in January 1982. A film
-   released before then counts only its later runs,
-   unless we have a sourced total from before 1982
-   (marked with a dagger). Only a few are sourced so
-   far; more are coming.
+   released before then counts only its runs from
+   1982 on, unless we have a sourced total for its
+   earlier runs: a baseline, marked with a dagger.
+
+Q: How do baselines work?
+A: A baseline is a film's domestic gross before 1982,
+   copied from an archived Box Office Mojo release
+   summary and cited. It counts from January 1, 1982,
+   and the charts from then on add to it. Rentals
+   (what distributors got back, which old trade
+   papers reported) are flagged and never mixed with
+   grosses. A baseline's tickets come from Box Office
+   Mojo's published estimate of its tickets where
+   there is one, else from its release year's average
+   price. Only a few films have a baseline so far;
+   more are coming.
 
 Q: What about re-releases?
-A: Re-issues and special editions add to the film's
-   lifetime total, as Box Office Mojo did it. Each film
-   page lists its releases and every weekend it charted.
+A: Re-issues, anniversary runs and special editions
+   add to the film's lifetime total, as Box Office
+   Mojo counts them. We spot them by their chart
+   titles (words like "Re-issue" or "Special
+   Edition", or a 3D or IMAX tag) or by Box Office
+   Mojo's own re-release label, and group the rest by
+   hand, each with a citation. Each film page lists
+   its releases and every weekend it charted.
 
 Q: How are career totals worked out?
-A: A director's total adds up every film they directed.
-   An actor's adds up the films they were billed in the
-   top ${TOP_BILLED} of, by Wikidata's cast order.
+A: A director's total adds up every film they
+   directed. An actor's adds up the films they were
+   billed in the top ${TOP_BILLED} of, by Wikidata's cast order.
 
-Q: What does the "e" mean?
-A: The archived chart we read still showed the studios'
-   Sunday estimate for that weekend, not the final
-   actual figure.
+Q: What's still missing or rough?
+A: * Films released before 1982 without a baseline
+     count only their later runs.
+   * Some re-issues of pre-1982 films aren't joined to
+     their film yet, so they show as films of their
+     own.
+   * Years with no published average ticket price are
+     interpolated, and years after the latest
+     published one reuse its price, so recent ticket
+     counts run high if prices rose.
+   * The latest weekends use the latest CPI month BLS
+     has published, until the next one is out. A
+     month BLS never published is filled in between
+     its neighbours.
+   * Many 1982-2016 chart rows have no theater count;
+     the tables show a dash.
+   * Box Office Mojo's own running totals sometimes go
+     down from one weekend to the next. We keep them
+     as charted and flag them in our checks.
+   * Cast lists come from Wikidata and can be
+     incomplete; billing follows Wikidata's order.
+   * Some releases, mostly small ones, couldn't be
+     matched to a Wikidata film; they keep a page of
+     their own.
 
 Q: I found a mistake, or want something removed.
-A: Please open a "Takedown or correction request" issue
-   on GitHub (link below). The Data Notice lists each
-   source's terms.`
+A: Please open a "Takedown or correction request"
+   issue on GitHub (link below), or reach the
+   maintainer through their GitHub profile. Accepted
+   takedowns are left out of the next build.`
 
 export default function About() {
   return (

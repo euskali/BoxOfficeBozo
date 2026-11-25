@@ -1,6 +1,6 @@
 """M6 golden tests: the ranking SQL (site/src/queries) on the real built tables.
 
-PR CI has no data, so these skip there; the data-build job in deploy.yml sets BOFFO_REQUIRE_DATA=1
+PR CI has no data, so these skip there; the CI data build (build-data.yml) sets BOFFO_REQUIRE_DATA=1
 and runs them before every deploy. Each expected fact cites where it comes from (read Nov 2026):
 
 - Star Wars is the domestic #1 when E.T. opens (11 Jun 1982) on its pre-1982 baseline: Box Office

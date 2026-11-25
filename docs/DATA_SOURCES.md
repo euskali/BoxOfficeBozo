@@ -62,7 +62,7 @@ Cite each row to one of these, with the table and page. Don't transcribe Box Off
 - Grosses only, never rentals, from these pages. Rentals from the trades need `is_rental=true`.
 
 ## Etiquette for anything fetched
-- Fetch **only in CI** (`BOFFO_FETCH=1` in the `data-build` job). Locally the ETL is offline.
+- Fetch **only in CI** (`BOFFO_FETCH=1` in the data build, `.github/workflows/build-data.yml`). Locally the ETL is offline.
 - Cache everything in `data/raw/` (persisted with `actions/cache`) and never re-fetch what's cached.
 - At least 5 s between requests to one host, and a User-Agent that names the project and repo URL. Back off on 429/503 and honor `Retry-After`.
 - Archives only for Box Office Mojo pages. Never the live site.

@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router'
 import { getManifest } from '../db/store'
 import { formatRetroDate } from '../lib/formatRetroDate'
+import { SOURCES } from '../sources'
 import SearchBox from './SearchBox'
 
 const NAV = [
@@ -181,11 +182,16 @@ export default function Layout() {
           Last updated: {formatRetroDate(new Date(__BUILD_DATE__))} | You are visitor #000042
           <span className="text-muted"> (static joke counter, nobody is tracked)</span>
         </p>
-        <p className="m-0 mb-1">
-          Data: Purdue STAT 695 dataset (Box Office Mojo weekend charts) · Internet Archive Wayback
-          Machine · Common Crawl · Wikidata (CC0) · BLS CPI · NATO (now Cinema United) and
-          Cinema Foundation average ticket prices. Not affiliated with IMDb, Box Office Mojo, or
-          The Numbers.
+        <p className="m-0 mb-1" data-testid="footer-credits">
+          Data:{' '}
+          {SOURCES.map((s, i) => (
+            <Fragment key={s.id}>
+              {i > 0 && ' · '}
+              <a href={s.url}>{s.label}</a>
+              {s.footer_note && ` (${s.footer_note})`}
+            </Fragment>
+          ))}
+          . Not affiliated with IMDb, Box Office Mojo, or The Numbers.
         </p>
         <p className="m-0">
           <a href={NOTICE_URL}>Data Notice</a> | <a href={REPO_URL}>GitHub repo</a>

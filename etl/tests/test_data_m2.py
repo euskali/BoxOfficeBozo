@@ -1,6 +1,6 @@
 """M2 accept criteria, run against the real built tables.
 
-PR CI has no data, so these skip there. The data-build job in deploy.yml sets
+PR CI has no data, so these skip there. The CI data build (build-data.yml) sets
 BOFFO_REQUIRE_DATA=1, which turns a missing table into a failure.
 
 Accept: every weekend from 1982W01 through the latest completed weekend

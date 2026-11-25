@@ -3,7 +3,7 @@
 Rules (see docs/DATA_SOURCES.md):
 
 * Offline by default. The network is touched only when ``BOFFO_FETCH=1``
-  (set by the CI data-build job). A cache miss otherwise raises
+  (set by the CI data build, .github/workflows/build-data.yml). A cache miss otherwise raises
   :class:`FetchDisabledError`.
 * Live Box Office Mojo / IMDb / The Numbers fetching is never allowed. Use
   the Wayback Machine or Common Crawl instead.
@@ -308,7 +308,7 @@ class Fetcher:
         if os.environ.get(ENV_FLAG) != "1":
             raise FetchDisabledError(
                 f"{what} is not cached in data/raw/. Network fetching runs in the CI "
-                f"data-build job; set {ENV_FLAG}=1 to allow it."
+                f"data build; set {ENV_FLAG}=1 to allow it."
             )
 
     # -- public ----------------------------------------------------------

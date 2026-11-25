@@ -1,0 +1,98 @@
+{
+  "_comment": [
+    "Every source the data build uses, one entry each. The About page and the site footer list these, and",
+    "etl/tests/test_sources.py checks them against DATA_NOTICE.md, the fetch allowlist and data/manual/*.csv:",
+    "name: appears in the entry's DATA_NOTICE.md section, and in label. label: shown on the site.",
+    "terms and gives: the About page's summary; footer_note: shown after the footer link. notice: its DATA_NOTICE.md heading.",
+    "hosts: the fetch allowlist hosts it's fetched from. cited_as: how data/manual/*.csv rows citing it begin;",
+    "citation_hosts: the hosts of those rows' source_url. Adding a source means a new entry here, plus",
+    "DATA_NOTICE.md, docs/DATA_SOURCES.md and the fetch allowlist (see CLAUDE.md)."
+  ],
+  "sources": [
+    {
+      "id": "stat695",
+      "name": "Purdue STAT 695 dataset",
+      "label": "Purdue STAT 695 dataset",
+      "url": "https://github.com/schloerke/stat695data",
+      "terms": "MIT license",
+      "gives": "weekend charts 1982-2016, Box Office Mojo's as compiled in March 2017 for an R package.",
+      "notice": "Box office figures, 1982–2016: Purdue STAT 695 dataset",
+      "hosts": ["raw.githubusercontent.com", "github.com", "codeload.github.com", "objects.githubusercontent.com"],
+      "cited_as": [],
+      "citation_hosts": []
+    },
+    {
+      "id": "wayback",
+      "name": "Wayback Machine",
+      "label": "Internet Archive Wayback Machine",
+      "url": "https://web.archive.org/",
+      "terms": "Internet Archive Terms of Use",
+      "gives": "archived copies of Box Office Mojo's weekend charts and release pages, 2017 on, and of the pages our hand-curated figures cite.",
+      "notice": "Box office figures, 2017–present: archived Box Office Mojo pages",
+      "hosts": ["web.archive.org", "archive.org"],
+      "cited_as": ["Box Office Mojo"],
+      "citation_hosts": ["web.archive.org"]
+    },
+    {
+      "id": "commoncrawl",
+      "name": "Common Crawl",
+      "label": "Common Crawl",
+      "url": "https://commoncrawl.org/",
+      "terms": "Common Crawl Terms of Use",
+      "gives": "the same Box Office Mojo pages, for any weekend the Wayback Machine lacks.",
+      "notice": "Box office figures, 2017–present: archived Box Office Mojo pages",
+      "hosts": ["index.commoncrawl.org", "data.commoncrawl.org"],
+      "cited_as": [],
+      "citation_hosts": []
+    },
+    {
+      "id": "wikidata",
+      "name": "Wikidata",
+      "label": "Wikidata",
+      "url": "https://www.wikidata.org/",
+      "terms": "CC0",
+      "footer_note": "CC0",
+      "gives": "films, release dates, IMDb IDs, directors and cast, read through QLever (University of Freiburg) and the Wikidata API.",
+      "notice": "Films, directors, and cast: Wikidata",
+      "hosts": ["www.wikidata.org", "query.wikidata.org", "qlever.dev", "qlever.cs.uni-freiburg.de"],
+      "cited_as": ["Wikidata"],
+      "citation_hosts": ["www.wikidata.org"]
+    },
+    {
+      "id": "bls",
+      "name": "Bureau of Labor Statistics",
+      "label": "U.S. Bureau of Labor Statistics",
+      "url": "https://www.bls.gov/cpi/",
+      "terms": "public domain",
+      "gives": "the consumer price index for all urban consumers (CPI-U).",
+      "notice": "Inflation: U.S. Bureau of Labor Statistics",
+      "hosts": ["api.bls.gov", "download.bls.gov"],
+      "cited_as": [],
+      "citation_hosts": []
+    },
+    {
+      "id": "nato",
+      "name": "NATO",
+      "label": "NATO (now Cinema United)",
+      "url": "https://web.archive.org/web/20210118013121/https://www.natoonline.org/data/ticket-price/",
+      "terms": "published facts, each row cited",
+      "gives": "annual average US ticket prices, from its table as archived in January 2021.",
+      "notice": "Average ticket prices and pre-1982 totals: hand-curated",
+      "hosts": [],
+      "cited_as": ["National Association of Theatre Owners"],
+      "citation_hosts": ["web.archive.org"]
+    },
+    {
+      "id": "cinema-foundation",
+      "name": "Cinema Foundation",
+      "label": "The Cinema Foundation",
+      "url": "https://fortune.com/2023/03/10/pandemic-2000-movie-screens-closed/",
+      "terms": "a published fact, cited",
+      "gives": "the 2022 average ticket price, from its March 2023 report, as Fortune reported it.",
+      "notice": "Average ticket prices and pre-1982 totals: hand-curated",
+      "hosts": [],
+      "cited_as": ["The Cinema Foundation"],
+      "citation_hosts": ["fortune.com"]
+    }
+  ]
+}

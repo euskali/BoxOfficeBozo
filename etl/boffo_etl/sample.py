@@ -4,7 +4,7 @@ The ETL can't fetch locally, so without this a fresh clone has no data to run th
 films, people and numbers here are made up (every title starts with "Sample:", every name is
 a placeholder) and the manifest says ``"sample": true``: the site shows a banner, the data
 tests skip, and ``make check`` fails, so sample data can't pass for the real thing. It is never
-deployed: the data-build job builds the real tables from scratch. ``make pull-data`` copies the
+deployed: the CI data build makes the real tables from scratch. ``make pull-data`` copies the
 real published tables instead.
 
 Run with ``python -m boffo_etl.sample [--force]``. It won't overwrite real data without --force.

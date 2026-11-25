@@ -37,6 +37,7 @@ etl/                      Python 3.12 uv project
     pull_data.py          M7: `make pull-data`, copies the live site's published tables (checksums verified)
     build.py              orchestrates; writes data/build/*.parquet and site/public/data/*.parquet
     checks.py             data-quality checks (also run in CI)
+    fetch_status.py       M8: after a CI build, is anything left that another data pass could fetch?
   tests/                  pytest (offline; synthetic fixtures only)
 data/
   manual/                 COMMITTED hand-curated CSVs; every row cites a real source (see below)
@@ -53,7 +54,7 @@ site/                     Vite + React + TypeScript + Tailwind v4 + DuckDB-WASM 
   public/data/            gitignored; final Parquet built in CI, shipped only in the Pages artifact
   public/duckdb-extensions/  gitignored; DuckDB's Parquet extension, downloaded at build time (pinned SHA-256)
 scripts/check-no-data.sh  `make guard`: fails if data files are tracked by git
-.github/workflows/        ci.yml (PRs) · deploy.yml (push to main: data-build → deploy)
+.github/workflows/        ci.yml (PRs) · deploy.yml (push to main: data passes → deploy) · build-data.yml (one pass)
 DATA_NOTICE.md            source terms, not-affiliated disclaimer, takedown contact
 ```
 
@@ -65,14 +66,14 @@ The repo is public, so it holds **code, docs, and cited manual CSVs only**. No s
 
 | Stage | Where it runs | Where the output lives |
 |---|---|---|
-| Fetch (Wayback, Common Crawl, Wikidata, BLS, stat695data) | CI only: the `data-build` job in `deploy.yml`, the one step with `BOFFO_FETCH=1` | `data/raw/`, persisted with `actions/cache` (never in git) |
+| Fetch (Wayback, Common Crawl, Wikidata, BLS, stat695data) | CI only: the build step of a data pass (`build-data.yml`, called by `deploy.yml`), the one step with `BOFFO_FETCH=1` | `data/raw/`, persisted with `actions/cache` (never in git) |
 | Build Parquet | CI (`make etl`) | `site/public/data/` (gitignored) |
-| Test + check | PRs (`ci.yml`) and `data-build` | n/a |
-| Publish | `data-build` uploads `site/dist` as the Pages artifact. Then the `deploy` job publishes it | GitHub Pages only |
+| Test + check | PRs (`ci.yml`) and the data pass that finishes the fetch | n/a |
+| Publish | That pass uploads `site/dist` as the Pages artifact. Then the `deploy` job publishes it | GitHub Pages only |
 
 - **Locally the ETL is offline.** A cache miss raises `FetchDisabledError`. Unit tests use small synthetic fixtures, never real scraped data.
-- **Raw cache:** restored by prefix `raw-v1-`. It's saved under `raw-v1-<fingerprint of the file list>` only when new files were fetched, and saved even if the build fails so a long first fetch isn't lost. GitHub evicts caches unused for 7 days or past the repo's size limit; the weekly Monday run keeps the cache in use. After an eviction the next run re-fetches politely. That's slow but correct. Bump the prefix to `raw-v2-` to force a clean fetch.
-- **PR CI has no data.** Tests that need built tables skip when they're absent. The `data-build` job runs them for real (from M1, set `BOFFO_REQUIRE_DATA=1` there so a missing table fails instead of skipping).
+- **Raw cache:** restored by prefix `raw-v1-`. It's saved under `raw-v1-<fingerprint of the file list>` only when new files were fetched, and saved even if the build fails so a long first fetch isn't lost. GitHub evicts caches unused for 7 days or past the repo's size limit; the weekly Monday run keeps the cache in use. After an eviction the next run re-fetches politely, which takes longer than one job may run, so `deploy.yml` chains up to three passes: a pass whose fetching isn't done (`boffo_etl.fetch_status`) saves the cache and the next one continues from it. Bump the prefix to `raw-v2-` to force a clean fetch, or rehearse one without touching the shared cache: run `deploy.yml` by hand with `cold_start`, which keeps its downloads under `raw-cold-<run id>-`.
+- **PR CI has no data.** Tests that need built tables skip when they're absent. The data passes run them for real (from M1, set `BOFFO_REQUIRE_DATA=1` there so a missing table fails instead of skipping).
 - **`make guard`** fails CI if `*.parquet`, `*.rda`, `data/raw/`, `data/build/`, or `site/public/data/` files are tracked.
 
 ---
