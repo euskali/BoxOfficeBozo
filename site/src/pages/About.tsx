@@ -13,7 +13,7 @@ export const MILESTONES = [
   { id: 'M4', name: 'Credits & people', status: 'Done' },
   { id: 'M5', name: 'Inflation & admissions', status: 'Done' },
   { id: 'M6', name: 'Ranking engine', status: 'Done' },
-  { id: 'M7', name: 'Site', status: 'Coming soon' },
+  { id: 'M7', name: 'Site', status: 'Done' },
   { id: 'M8', name: 'Data notes & launch', status: 'Coming soon' },
 ]
 
