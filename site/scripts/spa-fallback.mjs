@@ -1,5 +1,7 @@
 // GitHub Pages serves 404.html for unknown paths. Copying the SPA shell there
-// makes deep links such as /film/tt0120338 load the app, which then routes client-side.
+// makes any path load the app, which then routes client-side (and shows "not found").
+// Known routes get their own copies with status 200: `make site-build` runs
+// boffo_etl.route_pages after this (film/<id>.html, about.html, ...).
 import { copyFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'

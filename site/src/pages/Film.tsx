@@ -259,7 +259,8 @@ export default function Film() {
   const releases = useQuery(f ? filmReleases({ titleId }) : null)
   const error = filmQ.error ?? latestError ?? mine.error ?? slice.error ?? timeline.error ?? weekends.error ?? releases.error
 
-  const title = f ? `${String(f.title)} (${String(f.year)})` : null
+  // boffo_etl/route_pages.py writes the same title into each film's page file.
+  const title = f ? (f.year == null ? String(f.title) : `${String(f.title)} (${String(f.year)})`) : null
   const points = useMemo(
     () => (timeline.rows ?? []).map((r) => ({ day: String(r.as_of), rank: num(r.rank) })),
     [timeline.rows],
@@ -288,6 +289,7 @@ export default function Film() {
         ]}
         title={title ?? (notFound ? 'Film not found' : 'Film')}
         docTitle={title ?? null}
+        docTitlePending={!f && !notFound && !error}
       >
         <p>
           Pick a date to see where this film stood among all the films in our charts on that day: by box

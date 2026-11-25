@@ -37,6 +37,10 @@ def site_queries() -> Path:
     return repo_root() / "site" / "src" / "queries"
 
 
+def site_dist() -> Path:
+    return repo_root() / "site" / "dist"
+
+
 # Upper-case aliases (callables, evaluated at call time).
 REPO_ROOT = repo_root
 DATA_RAW = data_raw

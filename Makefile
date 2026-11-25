@@ -14,7 +14,7 @@ help:
 	@echo "make check       data-quality report: manual CSV sources + built tables"
 	@echo "make test        pytest + vitest"
 	@echo "make site-dev    Vite dev server"
-	@echo "make site-build  production build into site/dist"
+	@echo "make site-build  production build into site/dist, plus a page file for every route"
 	@echo "make sample-data fictional sample tables in site/public/data, for working on the site"
 	@echo "make pull-data   copy the published tables from the live site into site/public/data"
 	@echo "make guard       fail if built or scraped data is tracked by git"
@@ -42,6 +42,7 @@ site-dev:
 
 site-build:
 	cd site && $(NPM) run build
+	$(ETL) python -m boffo_etl.route_pages
 
 sample-data:
 	$(ETL) python -m boffo_etl.sample

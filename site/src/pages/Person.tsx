@@ -71,6 +71,7 @@ export default function Person() {
         crumbs={[{ label: 'People', to: '/people' }, { label: name ?? personId }]}
         title={name ?? (notFound ? 'Person not found' : 'Person')}
         docTitle={name}
+        docTitlePending={!p && !notFound && !error}
       >
         <p>
           Career box office as of the date you pick: the total of every film this person directed, or
