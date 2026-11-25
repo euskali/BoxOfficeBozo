@@ -6,11 +6,12 @@ NPM ?= npm
 ETL  = $(UV) --directory etl run
 
 .DEFAULT_GOAL := help
-.PHONY: help setup etl check test test-py test-site site-dev site-build sample-data pull-data guard clean
+.PHONY: help setup etl fetch-status check test test-py test-site site-dev site-build sample-data pull-data guard clean
 
 help:
 	@echo "make setup       install Python (uv) and Node (npm ci) dependencies from the lockfiles"
 	@echo "make etl         build Parquet into site/public/data (offline unless BOFFO_FETCH=1; CI sets it)"
+	@echo "make fetch-status after make etl: is anything left that another CI pass could fetch?"
 	@echo "make check       data-quality report: manual CSV sources + built tables"
 	@echo "make test        pytest + vitest"
 	@echo "make site-dev    Vite dev server"
@@ -25,6 +26,9 @@ setup:
 
 etl:
 	$(ETL) python -m boffo_etl.build
+
+fetch-status:
+	$(ETL) python -m boffo_etl.fetch_status
 
 check:
 	$(ETL) python -m boffo_etl.checks

@@ -3,7 +3,7 @@
 BoxOfficeBozo is a free, non-commercial hobby project. This notice says where the site's data comes from, what terms each source sets, and how to ask for something to be removed or corrected.
 
 ## Not affiliated
-BoxOfficeBozo is an independent fan project. It is **not affiliated with, endorsed by, or sponsored by** IMDb.com, Inc., Box Office Mojo, IMDbPro, Amazon, The Numbers / Nash Information Services, the Internet Archive, Common Crawl, the Wikimedia Foundation or Wikidata, the University of Freiburg or QLever, the U.S. Bureau of Labor Statistics, Cinema United (formerly NATO), Purdue University, or any film studio or distributor.
+BoxOfficeBozo is an independent fan project. It is **not affiliated with, endorsed by, or sponsored by** IMDb.com, Inc., Box Office Mojo, IMDbPro, Amazon, The Numbers / Nash Information Services, the Internet Archive, Common Crawl, the Wikimedia Foundation or Wikidata, the University of Freiburg or QLever, the U.S. Bureau of Labor Statistics, Cinema United (formerly NATO) or the Cinema Foundation, Fortune, Purdue University, or any film studio or distributor.
 
 Box Office Mojo and IMDb are trademarks of IMDb.com, Inc. Other trademarks belong to their owners. Film titles and people's names are used only to identify the films and people they refer to.
 
@@ -13,6 +13,7 @@ Box Office Mojo and IMDb are trademarks of IMDb.com, Inc. Other trademarks belon
 - **No scraped or derived data.** Raw downloads and built data files are produced in GitHub Actions and published only as part of the website build. CI fails if such files are ever committed.
 
 ## Sources and their terms
+These are all the sources the data build uses. The site's About page and footer list the same ones, and a test (`etl/tests/test_sources.py`) checks that this notice, the site and the build agree.
 
 ### Box office figures, 1982–2016: Purdue STAT 695 dataset
 - **What:** weekend chart figures (rank, weekend gross, theater count, cumulative gross, release date, genre, rating) from the `stat695data` R package by Barret Schloerke (https://github.com/schloerke/stat695data). It was compiled from Box Office Mojo on March 23, 2017.
@@ -38,7 +39,7 @@ Box Office Mojo and IMDb are trademarks of IMDb.com, Inc. Other trademarks belon
 
 ### Average ticket prices and pre-1982 totals: hand-curated
 - **What:** annual average US ticket prices and lifetime totals for major pre-1982 films, transcribed from published sources. Each row in `data/manual/` cites its source (publication with date and page, or a URL).
-- **Ticket prices:** the National Association of Theatre Owners' (NATO, now Cinema United) table of annual average U.S. ticket prices, as archived by the Wayback Machine, and the Cinema Foundation's *State of the Cinema Industry* report (March 2023) for 2022. These are published facts; we don't reproduce the publications.
+- **Ticket prices:** the National Association of Theatre Owners' (NATO, now Cinema United) table of annual average U.S. ticket prices, as archived by the Wayback Machine, and the Cinema Foundation's *State of the Cinema Industry* report (March 2023) for 2022, cited through Fortune's report of it (https://fortune.com/2023/03/10/pandemic-2000-movie-screens-closed/). These are published facts; we don't reproduce the publications.
 - Years without a sourced ticket price are interpolated between sourced years (or, after the last one, carried forward) by the build, and flagged on the site.
 - **Pre-1982 totals:** grosses from Box Office Mojo's film release summaries, and lifetime estimated admissions from its all-time chart of estimated tickets, as archived by the Wayback Machine. We use the figures only, cited to the archived page; we don't reproduce the pages. Totals that include a pre-1982 baseline are flagged on the site.
 

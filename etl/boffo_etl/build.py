@@ -19,7 +19,7 @@ from .manual import validate_manual_dir
 from .sources import bom_weekend, cpi, credits, stat695, wikidata
 
 REQUIRE_DATA_FLAG = "BOFFO_REQUIRE_DATA"
-# Fetching stops this long after the build starts (the data-build job times out at 330 min).
+# Fetching stops this long after the build starts (a data pass in build-data.yml times out at 330 min).
 # The weekend charts have their own budget inside it; the credits step gets what's left.
 BUILD_MINUTES_FLAG = "BOFFO_BUILD_MINUTES"
 DEFAULT_BUILD_MINUTES = 300.0

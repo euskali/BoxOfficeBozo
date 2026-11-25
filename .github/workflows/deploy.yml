@@ -1,19 +1,31 @@
-# Push to main: build the data in CI (the only place network fetching runs),
-# then build the site and deploy it to GitHub Pages. Built Parquet is never
+# Push to main, every Monday, or by hand: build the data in CI (the only place network
+# fetching runs), then the site, and deploy it to GitHub Pages. Built Parquet is never
 # committed; it ships only inside the Pages artifact.
+#
+# The data is built in passes (build-data.yml). Usually the raw-download cache holds nearly
+# everything and pass 1 finishes. From an empty cache (GitHub deletes caches unused for 7 days)
+# the fetch takes longer than one job may run: the first full fetch of the weekend charts
+# alone took 270 minutes. So a pass that isn't done saves the cache and hands over to the next,
+# up to three, and the site deploys once one finishes. The live site keeps its last deploy
+# until then.
 name: Build data and deploy
 
 on:
   push:
     branches: [main]
   # Every Monday: picks up the newest archived weekend and redeploys. It also keeps the
-  # raw-download cache in use: GitHub deletes caches unused for 7 days, and a cold cache
-  # means re-fetching every archived page politely, which takes hours. GitHub turns
-  # schedules off after 60 days without repository activity; turn it back on from the
-  # Actions tab.
+  # raw-download cache in use. GitHub turns schedules off after 60 days without repository
+  # activity; turn it back on from the Actions tab.
   schedule:
     - cron: "37 14 * * 1"
   workflow_dispatch:
+    inputs:
+      cold_start:
+        description: >-
+          Rehearse a cold start: begin from an empty raw-download cache of this run's own
+          (the shared cache is untouched), fetch everything again in passes, then deploy
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,93 +34,48 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
-env:
-  UV_LOCKED: "1"
-
 jobs:
-  data-build:
-    name: Build data and site
-    runs-on: ubuntu-latest
-    # The first run fetches every archived page politely (>=5 s apart); later runs hit the cache.
-    timeout-minutes: 330
-    env:
-      # Data-dependent tests and build steps fail here instead of skipping when a table is missing.
-      BOFFO_REQUIRE_DATA: "1"
-    steps:
-      - uses: actions/checkout@v7
+  pass-1:
+    name: Data pass 1
+    uses: ./.github/workflows/build-data.yml
+    with:
+      pass: 1
+      # A cold-start rehearsal keeps its downloads under a prefix of its own, so it starts empty,
+      # its later passes (and re-runs) continue from it, and later runs never restore it.
+      cache_prefix: ${{ inputs.cold_start && format('raw-cold-{0}-', github.run_id) || 'raw-v1-' }}
+      # Project site: /<repo>/. Set the SITE_BASE_PATH repo variable to "/" for a custom domain.
+      base_path: ${{ vars.SITE_BASE_PATH || format('/{0}/', github.event.repository.name) }}
 
-      - name: Guard against committed data
-        run: make guard
+  pass-2:
+    name: Data pass 2
+    needs: pass-1
+    if: needs.pass-1.outputs.complete != 'true'
+    uses: ./.github/workflows/build-data.yml
+    with:
+      pass: 2
+      cache_prefix: ${{ inputs.cold_start && format('raw-cold-{0}-', github.run_id) || 'raw-v1-' }}
+      base_path: ${{ vars.SITE_BASE_PATH || format('/{0}/', github.event.repository.name) }}
 
-      - uses: astral-sh/setup-uv@v10.3.3  # no floating major tag upstream; pin exact
-        with:
-          python-version: "3.12"
-          enable-cache: true
-          cache-dependency-glob: etl/uv.lock
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: site/.nvmrc
-          cache: npm
-          cache-dependency-path: site/package-lock.json
-
-      - name: Install dependencies
-        run: make setup
-
-      # Raw downloads (Wayback/Common Crawl captures, Wikidata results, CPI, stat695data)
-      # live in the Actions cache, never in git. The primary key never matches, so the
-      # newest cache is restored via the prefix.
-      - name: Restore raw download cache
-        id: raw-restore
-        uses: actions/cache/restore@v6
-        with:
-          path: data/raw
-          key: raw-v1-${{ github.run_id }}
-          restore-keys: raw-v1-
-
-      - name: Build data (fetches only what is not cached)
-        env:
-          BOFFO_FETCH: "1"
-          PYTHONUNBUFFERED: "1"  # show progress lines as they happen in a multi-hour step
-        run: make etl
-
-      # Save the cache even if the build failed, so a long first fetch is not lost.
-      # The key is a fingerprint of the file list, so unchanged caches are not re-saved.
-      - name: Fingerprint raw cache
-        id: raw-fp
-        if: always()
-        run: |
-          mkdir -p data/raw
-          fp=$(find data/raw -type f -printf '%P %s\n' | sort | sha256sum | cut -c1-16)
-          echo "key=raw-v1-$fp" >> "$GITHUB_OUTPUT"
-
-      - name: Save raw download cache
-        if: always() && steps.raw-fp.outputs.key != steps.raw-restore.outputs.cache-matched-key
-        uses: actions/cache/save@v6
-        with:
-          path: data/raw
-          key: ${{ steps.raw-fp.outputs.key }}
-
-      - name: pytest + vitest (data-dependent tests run here)
-        run: make test
-
-      - name: Data checks (checks.py)
-        run: make check
-
-      - name: Build site
-        env:
-          # Project site: /<repo>/. Set the SITE_BASE_PATH repo variable to "/" for a custom domain.
-          BASE_PATH: ${{ vars.SITE_BASE_PATH || format('/{0}/', github.event.repository.name) }}
-        run: make site-build
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: site/dist
+  pass-3:
+    name: Data pass 3
+    needs: pass-2
+    if: needs.pass-2.outputs.complete != 'true'
+    uses: ./.github/workflows/build-data.yml
+    with:
+      pass: 3
+      last: true  # tests and builds the site even if something is still unfetched
+      cache_prefix: ${{ inputs.cold_start && format('raw-cold-{0}-', github.run_id) || 'raw-v1-' }}
+      base_path: ${{ vars.SITE_BASE_PATH || format('/{0}/', github.event.repository.name) }}
 
   deploy:
     name: Deploy to GitHub Pages
-    needs: data-build
+    needs: [pass-1, pass-2, pass-3]
+    # The pass that finished the fetch (or the last pass) passed its tests and checks and
+    # uploaded the site. Passes that weren't needed are skipped.
+    if: >-
+      !cancelled() && !contains(needs.*.result, 'failure')
+      && (needs.pass-1.outputs.complete == 'true' || needs.pass-2.outputs.complete == 'true'
+          || needs.pass-3.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       pages: write

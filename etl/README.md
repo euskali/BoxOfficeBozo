@@ -18,12 +18,12 @@ Or directly:
 
 ## Offline by default
 
-The ETL never touches the network unless `BOFFO_FETCH=1` is set. The CI
-data-build job sets it; local runs and tests do not. A cache miss without the
+The ETL never touches the network unless `BOFFO_FETCH=1` is set. The CI data
+build (`.github/workflows/build-data.yml`) sets it; local runs and tests do not. A cache miss without the
 flag raises `FetchDisabledError`, and `make etl` skips that step.
 
 Tests that need real built tables (`tests/test_data_*.py`) skip when the tables
-are absent. The CI data-build job sets `BOFFO_REQUIRE_DATA=1`, which makes a
+are absent. The CI data build sets `BOFFO_REQUIRE_DATA=1`, which makes a
 missing table (or an uncached input) fail instead.
 
 All fetches go through `boffo_etl.fetch`: cached under `data/raw/http/`,

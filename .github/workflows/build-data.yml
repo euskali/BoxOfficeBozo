@@ -1,0 +1,130 @@
+# One pass of the data build, called by deploy.yml. This is the only place network fetching
+# runs. A pass restores the raw-download cache, builds the data (fetching only what the cache
+# lacks, each step within its time budget), saves the cache, and asks boffo_etl.fetch_status
+# whether anything is left to fetch. If nothing is, or this is the last pass, it runs the
+# tests and checks, builds the site and uploads the Pages artifact. If something is, it stops
+# there, and deploy.yml starts the next pass, which picks up from the saved cache.
+# Built Parquet is never committed; it ships only inside the Pages artifact.
+name: Build data (one pass)
+
+on:
+  workflow_call:
+    inputs:
+      pass:
+        description: Which pass this is (1, 2, ...)
+        type: number
+        required: true
+      last:
+        description: The last pass tests and builds the site even if fetching isn't done
+        type: boolean
+        default: false
+      cache_prefix:
+        description: Raw-download cache keys start with this; the newest such cache is restored
+        type: string
+        required: true
+      base_path:
+        description: The site's base path, "/" for a custom domain or "/<repo>/" for a project site
+        type: string
+        required: true
+    outputs:
+      complete:
+        description: "'true' when nothing was left to fetch"
+        value: ${{ jobs.build.outputs.complete }}
+
+permissions:
+  contents: read
+
+env:
+  UV_LOCKED: "1"
+
+jobs:
+  build:
+    name: Build data and site
+    runs-on: ubuntu-latest
+    # Fetching stops at the build's time budget (BOFFO_BUILD_MINUTES, 300 by default), so the
+    # build, the cache save and the site build fit in here.
+    timeout-minutes: 330
+    env:
+      # Data-dependent tests and build steps fail here instead of skipping when a table is missing.
+      BOFFO_REQUIRE_DATA: "1"
+      CACHE_PREFIX: ${{ inputs.cache_prefix }}
+    outputs:
+      complete: ${{ steps.status.outputs.complete }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Guard against committed data
+        run: make guard
+
+      - uses: astral-sh/setup-uv@v10.3.3  # no floating major tag upstream; pin exact
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: etl/uv.lock
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: site/.nvmrc
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install dependencies
+        run: make setup
+
+      # Raw downloads (Wayback/Common Crawl captures, Wikidata results, CPI, stat695data)
+      # live in the Actions cache, never in git. The primary key never matches, so the newest
+      # cache with the prefix is restored: the last run's, or the pass before this one.
+      - name: Restore raw download cache
+        id: raw-restore
+        uses: actions/cache/restore@v6
+        with:
+          path: data/raw
+          key: ${{ inputs.cache_prefix }}${{ github.run_id }}-${{ inputs.pass }}
+          restore-keys: ${{ inputs.cache_prefix }}
+
+      - name: Build data (fetches only what is not cached)
+        env:
+          BOFFO_FETCH: "1"
+          PYTHONUNBUFFERED: "1"  # show progress lines as they happen in a multi-hour step
+        run: make etl
+
+      # Save the cache even if the build failed, so a long fetch is not lost.
+      # The key is a fingerprint of the file list, so unchanged caches are not re-saved.
+      - name: Fingerprint raw cache
+        id: raw-fp
+        if: always()
+        run: |
+          mkdir -p data/raw
+          fp=$(find data/raw -type f -printf '%P %s\n' | sort | sha256sum | cut -c1-16)
+          echo "key=${CACHE_PREFIX}${fp}" >> "$GITHUB_OUTPUT"
+
+      - name: Save raw download cache
+        if: always() && steps.raw-fp.outputs.key != steps.raw-restore.outputs.cache-matched-key
+        uses: actions/cache/save@v6
+        with:
+          path: data/raw
+          key: ${{ steps.raw-fp.outputs.key }}
+
+      - name: Is the fetching done?
+        id: status
+        run: make fetch-status
+
+      - name: pytest + vitest (data-dependent tests run here)
+        if: steps.status.outputs.complete == 'true' || inputs.last
+        run: make test
+
+      - name: Data checks (checks.py)
+        if: steps.status.outputs.complete == 'true' || inputs.last
+        run: make check
+
+      - name: Build site
+        if: steps.status.outputs.complete == 'true' || inputs.last
+        env:
+          BASE_PATH: ${{ inputs.base_path }}
+        run: make site-build
+
+      - name: Upload Pages artifact
+        if: steps.status.outputs.complete == 'true' || inputs.last
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/dist

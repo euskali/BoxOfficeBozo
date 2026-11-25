@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { NOTES_WIDTH } from './pages/About'
+import { SOURCES } from './sources'
 
 // The pages run the real shared SQL, on the synthetic fixture (src/queries/testdata/fixture.sql),
 // through DuckDB-WASM's Node build instead of the browser's lazy loader.
@@ -163,6 +165,36 @@ describe('Static pages', () => {
     renderAt('/about')
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('About BoxOfficeBozo')
     expect(bodyRows(screen.getByRole('table', { name: 'Construction progress' }))).toHaveLength(9)
+  })
+
+  it('answers every data question M8 asks for, in lines that fit a phone', () => {
+    renderAt('/about')
+    const notes = document.querySelector('pre.notes')!.textContent!
+    for (const q of [
+      'Where do the numbers come from, and on what terms?',
+      'What does "domestic" mean?',
+      'Are these final figures or estimates?',
+      'How do baselines work?',
+      'Why do CPI dollars and tickets rank films',
+      'What about re-releases?',
+      "What's still missing or rough?",
+      'I found a mistake, or want something removed.',
+    ]) {
+      expect(notes).toContain(`Q: ${q}`)
+    }
+    const widest = Math.max(...notes.split('\n').map((l) => l.length))
+    expect(widest).toBeLessThanOrEqual(NOTES_WIDTH)
+  })
+
+  it('lists every source on About and links each one in the footer', () => {
+    renderAt('/about')
+    const notes = document.querySelector('pre.notes')!.textContent!.replace(/\s+/g, ' ')
+    const credits = screen.getByTestId('footer-credits')
+    expect(within(credits).getAllByRole('link')).toHaveLength(SOURCES.length)
+    for (const s of SOURCES) {
+      expect(notes).toContain(`* ${s.label}: ${s.gives} Terms: ${s.terms}.`)
+      expect(within(credits).getByRole('link', { name: s.label })).toHaveAttribute('href', s.url)
+    }
   })
 
   it('renders the 404 page for unknown routes', () => {
