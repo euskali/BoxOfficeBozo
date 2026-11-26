@@ -275,6 +275,31 @@ def test_late_runs_from_snapshots():
     assert match.late_runs(snaps) == {"bom:rl24217089": date(2004, 5, 23)}
 
 
+def test_late_run_originals_are_dated_by_their_opening(repo):
+    # Box Office Mojo's 1975 Jaws first charts here on 2024-12-29, its week 2585. With no release
+    # page to date it (a build from an empty cache), it's still a 1975 film: the opening its weeks
+    # counter implies, which Wikidata's US date is close to. A late run with no US date near its
+    # opening (a 1984 film whose US run opened in 2014) keeps the counter's year, not the year it
+    # first charted here.
+    build_dir = repo / "data" / "build"
+    build_dir.mkdir(parents=True)
+    wd.merge_items([{**f, "dates": list(f["dates"])} for f in [*JAWS, film("Q8500", "Old Doc", 1984)]]).write_parquet(
+        build_dir / "wikidata_films.parquet")
+    runs = [(rel("bom:rl30", "Jaws", date(2024, 12, 29)), date(1975, 6, 22)),
+            (rel("bom:rl50", "Old Doc", date(2018, 9, 23)), date(2014, 6, 8))]
+    releases = pl.DataFrame([r for r, _ in runs], schema=build.PUBLISHED_RELEASE_SCHEMA)
+    snaps = pl.DataFrame([{"weekend_end": r["first_weekend"], "release_id": r["release_id"], "title_id": r["title_id"],
+                           "rank": 13, "weekend_gross": 10, "theaters": None, "total_gross": 1_000_000,
+                           "weeks": (r["first_weekend"] - opened).days // 7 + 1, "source": "bom_weekend",
+                           "capture_url": None, "is_estimate": False} for r, opened in runs], schema=SNAPSHOT_SCHEMA)
+    out = match.apply(releases, snaps, build_dir, repo / "data" / "manual", log=lambda *a: None)
+    tid = dict(zip(out.releases["release_id"].to_list(), out.releases["title_id"].to_list()))
+    t = {x["title_id"]: x for x in out.titles.to_dicts()}
+    assert tid["bom:rl30"] == "tt0073195"
+    assert (t["tt0073195"]["year"], t["tt0073195"]["release_date"]) == (1975, date(1975, 6, 20))
+    assert (t[tid["bom:rl50"]]["year"], t[tid["bom:rl50"]]["release_date"]) == (2014, None)
+
+
 # --- apply: the published tables ----------------------------------------------------------
 
 def test_apply_rewrites_title_ids_and_builds_titles(repo, films):

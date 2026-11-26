@@ -32,6 +32,7 @@ const BROWSE = [
 ]
 
 const NEWS = [
+  { date: 'Nov 25 2026', text: 'New data notes on the About page: where every number comes from, on what terms, and what is still rough.' },
   { date: 'Nov 24 2026', text: 'The time machine is open! Leaderboards, film and people pages, and weekend charts for any date since 1982.' },
   { date: 'Nov 5 2026', text: 'Site scaffolded. Hello 1999!' },
 ]

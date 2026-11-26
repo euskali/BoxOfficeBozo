@@ -15,7 +15,7 @@ export const MILESTONES = [
   { id: 'M5', name: 'Inflation & admissions', status: 'Done' },
   { id: 'M6', name: 'Ranking engine', status: 'Done' },
   { id: 'M7', name: 'Site', status: 'Done' },
-  { id: 'M8', name: 'Data notes & launch', status: 'Coming soon' },
+  { id: 'M8', name: 'Data notes & launch', status: 'Done' },
 ]
 
 /** The FAQ's widest line, so it fits a 375 px phone in the .notes box. */

@@ -571,7 +571,12 @@ def _apply_label_overrides(releases: pl.DataFrame, overrides: dict[str, dict]) -
 
 def build_titles(rels: list[dict], assign: dict[str, Assign], films: FilmIndex,
                  baseline: list[dict]) -> pl.DataFrame:
-    """One row per title_id: the original release's facts, or Wikidata's for re-release-only titles."""
+    """One row per title_id: the original release's facts, or Wikidata's for re-release-only titles.
+
+    An original with no release date of its own is dated by its opening (a late run's, from its
+    weeks counter) or by Wikidata's US date when that's within a year of it: Box Office Mojo's
+    1975 Jaws, first charted here on 2024-12-29, is a 1975 film.
+    """
     by_title: dict[str, list[dict]] = defaultdict(list)
     for r in rels:
         by_title[r["title_id"]].append(r)
@@ -597,9 +602,10 @@ def build_titles(rels: list[dict], assign: dict[str, Assign], films: FilmIndex,
             if originals:
                 title = root["title"]
                 rd = root.get("release_date")
-                if rd is None and us and root.get("first_weekend") and abs(us - root["first_weekend"]) <= timedelta(days=365):
+                opened = _first_seen(root)
+                if rd is None and us and opened and abs(us - opened) <= timedelta(days=365):
                     rd = us
-                year = rd.year if rd else root["first_weekend"].year
+                year = rd.year if rd else opened.year
             else:
                 title = (film.label if film and film.label else None) or split_title(root["title"] or "")[0]
                 rd = us
@@ -708,6 +714,8 @@ def apply(releases: pl.DataFrame, snapshots: pl.DataFrame, build_dir: Path | Non
         pl.col("release_id").replace_strict({k: v.title_id for k, v in a.items()}, default=None,
                                             return_dtype=pl.String).alias("title_id"))
     final = out_releases.join(gross, on="release_id", how="left").to_dicts()
+    for r in final:
+        r["opened"] = opened.get(r["release_id"])
     titles = build_titles(final, a, films, baseline)
 
     report = _report(rels, result, len(films), wd_report)
