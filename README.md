@@ -23,7 +23,7 @@ Looks like 1999. Works like 2026.
 - [x] M5 Inflation & admissions
 - [x] M6 Ranking engine + golden tests
 - [x] M7 Site
-- [ ] M8 Data notes & launch
+- [x] M8 Data notes & launch
 
 ## Working on the site
 The data is built only in CI, so a fresh clone has none. Fill `site/public/data/` (gitignored) with either:

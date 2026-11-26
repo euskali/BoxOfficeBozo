@@ -113,3 +113,17 @@ def test_rereleases_join_their_film(con, release_ids, title_id):
 ])
 def test_late_runs_join_their_first_run(con, release_id, title_id):
     assert con.execute("SELECT title_id FROM r WHERE release_id = ?", [release_id]).fetchone() == (title_id,)
+
+
+# Late runs on the same chart keep their films' years, not 2024, with or without their release
+# pages (a build from an empty cache has hardly any). Expected years are the Wikidata items' US
+# publication dates (P577 with P291 Q30), read through the Wikidata API in November 2026:
+# Jaws (Q189505, P345 tt0073195) 1975-06-20; The Muppet Movie (Q1518589, P345 tt0079588) 1979-06-22.
+@pytest.mark.parametrize("release_id, title_id, year", [
+    ("bom:rl3545925121", "tt0073195", 1975),
+    ("bom:rl3429205505", "tt0079588", 1979),
+])
+def test_late_runs_keep_their_films_year(con, release_id, title_id, year):
+    row = con.execute("SELECT r.title_id, t.year FROM r JOIN t USING (title_id) WHERE r.release_id = ?",
+                      [release_id]).fetchone()
+    assert row == (title_id, year)
